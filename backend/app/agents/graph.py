@@ -308,9 +308,16 @@ def _validate_build_fix_claims(errors, fix_result, patched: set[str], proposed_p
             f"Missing claim(s): {', '.join(missing)}"
         )
 
+    errors_by_key = {
+        _claim_key(err.file, err.line, err.code): err
+        for err in errors
+    }
     proposed_roots = {_npm_root(spec) for spec in proposed_packages}
     shared_patches = {
         path for path in patched if path.startswith("src/data/") or "type" in path.lower()
+    }
+    component_contract_patches = {
+        path for path in patched if path.startswith("src/components/") and path.endswith((".tsx", ".ts"))
     }
     for claim in claims:
         if not claim.diagnosis.strip() or not claim.evidence_used.strip() or not claim.change_summary.strip():
@@ -320,14 +327,28 @@ def _validate_build_fix_claims(errors, fix_result, patched: set[str], proposed_p
 
         claim_file = normalize_posix_path(claim.file)
         patch_path = normalize_posix_path(claim.patch_path) if claim.patch_path else ""
+        claim_error = errors_by_key.get(_claim_key(claim.file, claim.line, claim.code))
         if proposed_packages and (not patched or patch_path in proposed_roots):
             continue
         if claim_file in patched or patch_path in patched or shared_patches:
+            continue
+        if _is_component_props_contract_error(claim_file, claim.code, claim_error) and component_contract_patches:
             continue
         raise ValueError(
             "Each error_fixes item must point to an actual patch_path, package change, "
             f"or shared source/data/type patch. Unmatched claim: {claim_file}:{claim.line}:TS{claim.code}"
         )
+
+
+def _is_component_props_contract_error(claim_file: str, code: str, error) -> bool:
+    clean_code = str(code).upper().removeprefix("TS")
+    if clean_code != "2322":
+        return False
+    if not claim_file.endswith(".tsx"):
+        return False
+    if error is None:
+        return False
+    return "IntrinsicAttributes" in error.message and "Property" in error.message
 
 
 

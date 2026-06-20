@@ -4,11 +4,13 @@ import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState
 import dynamic from "next/dynamic";
 
 import {
+  applyProjectEdit,
   createProjectFile,
   createProject,
   deleteProjectFile,
   getProjectDiagnostics,
   listProjectFiles,
+  previewProjectEdit,
   readProjectFile,
   renameProjectFile,
   resolvePreviewUrl,
@@ -17,6 +19,7 @@ import {
   sendChat,
   type ChatResponse,
   type ProjectDiagnosticsResponse,
+  type ProjectEditPreviewResponse,
 } from "@/lib/api";
 import {
   bootViteReactProject,
@@ -296,6 +299,10 @@ export default function BuilderPage() {
   const [diagnostics, setDiagnostics] = useState<ProjectDiagnosticsResponse | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const [editPreview, setEditPreview] = useState<ProjectEditPreviewResponse | null>(null);
+  const [editPreviewLoading, setEditPreviewLoading] = useState(false);
+  const [editApplyLoading, setEditApplyLoading] = useState(false);
+  const [editPreviewError, setEditPreviewError] = useState<string | null>(null);
   const saveCurrentFileRef = useRef<() => void>(() => {});
 
   const fileIsDirty = selectedFile !== null && fileContent !== savedFileContent;
@@ -790,26 +797,57 @@ export default function BuilderPage() {
       return;
     }
 
-    setLoading(true);
-    setLoadingHint("生成中...");
-    setError(null);
-    setPreviewUrl(null);
+    setEditPreviewLoading(true);
+    setEditPreviewError(null);
+    setEditPreview(null);
 
     try {
-      const response = await sendChat(projectId, editMessage.trim(), "edit");
-      const version = Date.now();
-      setResult(response);
+      const preview = await previewProjectEdit(projectId, editMessage.trim());
+      setEditPreview(preview);
+    } catch (err: unknown) {
+      setEditPreviewError(err instanceof Error ? err.message : "無法產生 Diff Review");
+    } finally {
+      setEditPreviewLoading(false);
+    }
+  }
+
+  async function acceptEditPreview() {
+    if (!projectId || !editPreview || editPreview.patches.length === 0) {
+      return;
+    }
+
+    setEditApplyLoading(true);
+    setEditPreviewError(null);
+
+    try {
+      const response = await applyProjectEdit(
+        projectId,
+        editPreview.patches.map((patch) => ({ path: patch.path, content: patch.content })),
+      );
+      const changedResponse: ChatResponse = {
+        message: response.message,
+        reply: editPreview.notes || "已套用 AI 修改。",
+        project_id: projectId,
+        workspace_path: "",
+        files: response.changed_files.map((file) => file.path),
+        preview_url: previewUrl,
+        build_attempts: result?.build_attempts ?? 0,
+        fix_attempts: result?.fix_attempts ?? 0,
+        build_log: result?.build_log ?? "",
+        warnings: [...(result?.warnings ?? []), ...editPreview.warnings],
+        changed_files: response.changed_files,
+      };
+
+      setResult(changedResponse);
       setEditMessage("");
-      setPreviewKey(version);
-      setPreviewUrl(resolvePreviewUrl(response.preview_url, version));
+      setEditPreview(null);
       await refreshProjectFiles();
-      await syncChatResponseToWebContainer(response);
+      await syncChatResponseToWebContainer(changedResponse);
       await refreshDiagnostics();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "生成失敗");
+      setEditPreviewError(err instanceof Error ? err.message : "無法套用 AI 修改");
     } finally {
-      setLoading(false);
-      setLoadingHint("生成中...");
+      setEditApplyLoading(false);
     }
   }
 
@@ -1069,12 +1107,85 @@ export default function BuilderPage() {
               />
               <button
                 type="submit"
-                disabled={bootstrapping || loading || !projectId || !editMessage.trim()}
+                disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || !projectId || !editMessage.trim()}
                 className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
               >
-                {loading ? loadingHint : "套用微調"}
+                {editPreviewLoading ? "產生 diff 中..." : "產生 Diff Review"}
               </button>
             </form>
+          ) : null}
+
+          {editPreviewError ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {editPreviewError}
+            </div>
+          ) : null}
+
+          {editPreview ? (
+            <div className="rounded-xl border border-violet-200 bg-white p-4 text-sm shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-violet-950">Diff Review</p>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        editPreview.change_size === "large"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-emerald-100 text-emerald-800"
+                      }`}
+                    >
+                      {editPreview.change_size === "large" ? "大改動，需確認" : "小改動"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-zinc-500">
+                    {editPreview.notes || "AI 已產生待審核修改。"}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {editPreview.patches.length} 個檔案，{editPreview.total_diff_lines} 行 diff
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditPreview(null)}
+                    className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
+                    disabled={editApplyLoading}
+                  >
+                    Reject
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void acceptEditPreview()}
+                    className="rounded-lg bg-violet-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:bg-violet-300"
+                    disabled={editApplyLoading || editPreview.patches.length === 0}
+                  >
+                    {editApplyLoading ? "套用中..." : "Accept & Apply"}
+                  </button>
+                </div>
+              </div>
+
+              {[...editPreview.npm_dependencies, ...editPreview.dev_dependencies].length > 0 ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <p className="font-medium">此修改包含 npm dependency 變更，接受前請特別確認。</p>
+                  <p className="mt-1 font-mono">
+                    {[...editPreview.npm_dependencies, ...editPreview.dev_dependencies].join(", ")}
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="mt-3 space-y-3">
+                {editPreview.patches.map((patch) => (
+                  <details key={patch.path} open className="overflow-hidden rounded-lg border border-zinc-200">
+                    <summary className="cursor-pointer bg-zinc-50 px-3 py-2 font-mono text-xs text-zinc-700">
+                      {patch.change_type === "added" ? "新增" : "修改"} {patch.path}
+                    </summary>
+                    <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all bg-zinc-950 p-3 text-xs leading-5 text-zinc-100">
+                      {patch.diff || "No textual diff."}
+                    </pre>
+                  </details>
+                ))}
+              </div>
+            </div>
           ) : null}
 
           {loading ? (

@@ -64,6 +64,31 @@ export type ProjectDiagnosticsResponse = {
   updated_at: string | null;
 };
 
+export type ProjectEditPatchPreview = {
+  path: string;
+  content: string;
+  previous_content: string;
+  diff: string;
+  change_type: "added" | "modified";
+  diff_lines: number;
+};
+
+export type ProjectEditPreviewResponse = {
+  notes: string;
+  patches: ProjectEditPatchPreview[];
+  npm_dependencies: string[];
+  dev_dependencies: string[];
+  warnings: ProjectWarning[];
+  change_size: "small" | "large";
+  requires_confirmation: boolean;
+  total_diff_lines: number;
+};
+
+export type ProjectEditApplyResponse = {
+  message: string;
+  changed_files: ChangedProjectFile[];
+};
+
 async function parseError(response: Response): Promise<string> {
   try {
     const data = (await response.json()) as { detail?: string | { msg: string }[] };
@@ -247,6 +272,44 @@ export async function runProjectBuild(projectId: string): Promise<ProjectDiagnos
   }
 
   return response.json() as Promise<ProjectDiagnosticsResponse>;
+}
+
+export async function previewProjectEdit(
+  projectId: string,
+  message: string,
+): Promise<ProjectEditPreviewResponse> {
+  const response = await fetchWithTimeout(
+    `${API_URL}/api/projects/${projectId}/edit/preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    },
+    CHAT_TIMEOUT_MS,
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return response.json() as Promise<ProjectEditPreviewResponse>;
+}
+
+export async function applyProjectEdit(
+  projectId: string,
+  patches: ChangedProjectFile[],
+): Promise<ProjectEditApplyResponse> {
+  const response = await fetch(`${API_URL}/api/projects/${projectId}/edit/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ patches }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return response.json() as Promise<ProjectEditApplyResponse>;
 }
 
 export function resolvePreviewUrl(

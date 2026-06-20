@@ -1,5 +1,6 @@
 import logging
 import uuid
+from difflib import unified_diff
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
@@ -8,6 +9,13 @@ from app.agents.graph import website_builder_graph, website_edit_graph
 from app.agents.imports import normalize_generated_files, normalize_posix_path
 from app.agents.state import AgentState
 from app.schemas.diagnostics import ProjectDiagnosticsResponse
+from app.schemas.edit_review import (
+    ProjectEditApplyRequest,
+    ProjectEditApplyResponse,
+    ProjectEditPatchPreview,
+    ProjectEditPreviewRequest,
+    ProjectEditPreviewResponse,
+)
 from app.schemas.plan import FilePlanItem, ProjectPlan
 from app.schemas.chat import ChatRequest, ChatResponse, ProjectCreateResponse
 from app.schemas.project_file import (
@@ -39,6 +47,7 @@ from app.services.workspace import (
     read_editable_project_file,
     rename_editable_project_file,
     write_editable_project_file,
+    write_project_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -246,6 +255,95 @@ def get_project_diagnostics(project_id: str) -> ProjectDiagnosticsResponse:
         return load_project_diagnostics(project_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/edit/preview", response_model=ProjectEditPreviewResponse)
+def post_project_edit_preview(project_id: str, body: ProjectEditPreviewRequest) -> ProjectEditPreviewResponse:
+    try:
+        project_dir = scaffold_vite_project(project_id, install_dependencies=False)
+        current_files = collect_project_sources(project_dir)
+        edit = clean_edit_patches(request_project_edit(project_dir, body.message))
+    except (ValueError, RuntimeError) as exc:
+        status = 400 if isinstance(exc, ValueError) else 500
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    previews = [
+        _edit_patch_preview(patch.path, patch.content, current_files.get(normalize_posix_path(patch.path), ""))
+        for patch in edit.patches
+    ]
+    total_diff_lines = sum(preview.diff_lines for preview in previews)
+    change_size = _classify_edit_change(
+        previews,
+        total_diff_lines,
+        npm_dependencies=[*edit.npm_dependencies, *edit.dev_dependencies],
+    )
+
+    return ProjectEditPreviewResponse(
+        notes=edit.notes,
+        patches=previews,
+        npm_dependencies=edit.npm_dependencies,
+        dev_dependencies=edit.dev_dependencies,
+        warnings=edit.warnings,
+        change_size=change_size,
+        requires_confirmation=change_size == "large",
+        total_diff_lines=total_diff_lines,
+    )
+
+
+@router.post("/{project_id}/edit/apply", response_model=ProjectEditApplyResponse)
+def post_project_edit_apply(project_id: str, body: ProjectEditApplyRequest) -> ProjectEditApplyResponse:
+    try:
+        changed_files = []
+        for patch in body.patches:
+            safe_path = normalize_posix_path(patch.path)
+            write_project_file(project_id, safe_path, patch.content)
+            changed_files.append({"path": safe_path, "content": patch.content})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ProjectEditApplyResponse(changed_files=changed_files)
+
+
+def _edit_patch_preview(path: str, content: str, previous_content: str) -> ProjectEditPatchPreview:
+    safe_path = normalize_posix_path(path)
+    diff = "\n".join(
+        unified_diff(
+            previous_content.splitlines(),
+            content.splitlines(),
+            fromfile=f"a/{safe_path}",
+            tofile=f"b/{safe_path}",
+            lineterm="",
+        )
+    )
+    diff_lines = sum(1 for line in diff.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---")))
+
+    return ProjectEditPatchPreview(
+        path=safe_path,
+        content=content,
+        previous_content=previous_content,
+        diff=diff,
+        change_type="modified" if previous_content else "added",
+        diff_lines=diff_lines,
+    )
+
+
+def _classify_edit_change(
+    previews: list[ProjectEditPatchPreview],
+    total_diff_lines: int,
+    *,
+    npm_dependencies: list[str],
+) -> str:
+    if npm_dependencies:
+        return "large"
+    if len(previews) >= 3:
+        return "large"
+    if any(preview.change_type == "added" for preview in previews):
+        return "large"
+    if any(preview.path == "src/App.tsx" and preview.diff_lines >= 80 for preview in previews):
+        return "large"
+    if total_diff_lines >= 80:
+        return "large"
+    return "small"
 
 
 def _initial_state(message: str, project_id: str, project_dir) -> AgentState:
