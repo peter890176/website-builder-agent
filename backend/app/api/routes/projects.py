@@ -7,22 +7,37 @@ from fastapi.responses import FileResponse, RedirectResponse
 from app.agents.graph import website_builder_graph, website_edit_graph
 from app.agents.imports import normalize_generated_files, normalize_posix_path
 from app.agents.state import AgentState
+from app.schemas.diagnostics import ProjectDiagnosticsResponse
 from app.schemas.plan import FilePlanItem, ProjectPlan
 from app.schemas.chat import ChatRequest, ChatResponse, ProjectCreateResponse
 from app.schemas.project_file import (
+    ProjectFileCreateRequest,
+    ProjectFileCreateResponse,
     ProjectFileContentResponse,
+    ProjectFileDeleteResponse,
     ProjectFileListResponse,
+    ProjectFileRenameRequest,
+    ProjectFileRenameResponse,
     ProjectFileSaveRequest,
     ProjectFileSaveResponse,
 )
+from app.services.build import try_build_vite_project
 from app.services.build_fix import collect_project_sources
+from app.services.diagnostics import (
+    build_diagnostics_from_log,
+    load_project_diagnostics,
+    save_project_diagnostics,
+)
 from app.services.project_edit import clean_edit_patches, request_project_edit
 from app.services.scaffold import copy_vite_template, ensure_npm_dependencies, scaffold_vite_project
 from app.services.workspace import (
+    create_editable_project_file,
+    delete_editable_project_file,
     ensure_project_dir,
     get_dist_dir,
     list_project_files,
     read_editable_project_file,
+    rename_editable_project_file,
     write_editable_project_file,
 )
 
@@ -97,6 +112,14 @@ def post_chat(project_id: str, body: ChatRequest) -> ChatResponse:
 
     warnings = result.get("warnings", [])
     changed_files = _changed_files_payload(result.get("generated_files", {}), project_dir)
+    save_project_diagnostics(
+        build_diagnostics_from_log(
+            project_id,
+            passed=True,
+            build_log=result.get("build_log", ""),
+            warnings=warnings,
+        )
+    )
 
     return ChatResponse(
         message="Website generated successfully with warnings" if warnings else "Website generated successfully",
@@ -161,6 +184,68 @@ def put_project_file_content(project_id: str, body: ProjectFileSaveRequest) -> P
         raise HTTPException(status_code=404, detail="File not found") from exc
 
     return ProjectFileSaveResponse(path=body.path)
+
+
+@router.post("/{project_id}/files/content", response_model=ProjectFileCreateResponse)
+def post_project_file_content(project_id: str, body: ProjectFileCreateRequest) -> ProjectFileCreateResponse:
+    try:
+        create_editable_project_file(project_id, body.path, body.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail="File already exists") from exc
+
+    return ProjectFileCreateResponse(path=body.path)
+
+
+@router.patch("/{project_id}/files/content", response_model=ProjectFileRenameResponse)
+def patch_project_file_content(project_id: str, body: ProjectFileRenameRequest) -> ProjectFileRenameResponse:
+    try:
+        rename_editable_project_file(project_id, body.old_path, body.new_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found") from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail="Target file already exists") from exc
+
+    return ProjectFileRenameResponse(old_path=body.old_path, new_path=body.new_path)
+
+
+@router.delete("/{project_id}/files/content", response_model=ProjectFileDeleteResponse)
+def delete_project_file_content(project_id: str, path: str) -> ProjectFileDeleteResponse:
+    try:
+        delete_editable_project_file(project_id, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found") from exc
+
+    return ProjectFileDeleteResponse(path=path)
+
+
+@router.post("/{project_id}/build", response_model=ProjectDiagnosticsResponse)
+def post_project_build(project_id: str) -> ProjectDiagnosticsResponse:
+    try:
+        project_dir = scaffold_vite_project(project_id)
+        passed, build_log = try_build_vite_project(project_dir, project_id)
+        diagnostics = build_diagnostics_from_log(project_id, passed=passed, build_log=build_log)
+        save_project_diagnostics(diagnostics)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        diagnostics = build_diagnostics_from_log(project_id, passed=False, build_log=str(exc))
+        save_project_diagnostics(diagnostics)
+
+    return diagnostics
+
+
+@router.get("/{project_id}/diagnostics", response_model=ProjectDiagnosticsResponse)
+def get_project_diagnostics(project_id: str) -> ProjectDiagnosticsResponse:
+    try:
+        return load_project_diagnostics(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _initial_state(message: str, project_id: str, project_dir) -> AgentState:

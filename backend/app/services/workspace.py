@@ -134,5 +134,56 @@ def write_editable_project_file(project_id: str, relative_path: str, content: st
     return file_path
 
 
+def create_editable_project_file(project_id: str, relative_path: str, content: str = "") -> Path:
+    relative = _validate_ide_relative_path(relative_path)
+    project_dir = ensure_project_dir(project_id)
+    file_path = project_dir / relative
+    if file_path.exists():
+        raise FileExistsError(relative_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8")
+    return file_path
+
+
+def delete_editable_project_file(project_id: str, relative_path: str) -> Path:
+    relative = _validate_ide_relative_path(relative_path)
+    project_dir = ensure_project_dir(project_id)
+    file_path = project_dir / relative
+    if not file_path.is_file():
+        raise FileNotFoundError(relative_path)
+
+    file_path.unlink()
+    _remove_empty_parent_dirs(project_dir, file_path.parent)
+    return file_path
+
+
+def rename_editable_project_file(project_id: str, old_relative_path: str, new_relative_path: str) -> Path:
+    old_relative = _validate_ide_relative_path(old_relative_path)
+    new_relative = _validate_ide_relative_path(new_relative_path)
+    project_dir = ensure_project_dir(project_id)
+    old_path = project_dir / old_relative
+    new_path = project_dir / new_relative
+
+    if not old_path.is_file():
+        raise FileNotFoundError(old_relative_path)
+    if new_path.exists():
+        raise FileExistsError(new_relative_path)
+
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.rename(new_path)
+    _remove_empty_parent_dirs(project_dir, old_path.parent)
+    return new_path
+
+
+def _remove_empty_parent_dirs(project_dir: Path, directory: Path) -> None:
+    current = directory
+    while current != project_dir and project_dir in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
 def get_dist_dir(project_id: str) -> Path:
     return ensure_project_dir(project_id) / "dist"

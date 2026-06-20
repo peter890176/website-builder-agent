@@ -103,6 +103,36 @@ export async function writeFilesToWebContainer(
   }
 }
 
+export async function deleteFileFromWebContainer(path: string, onLog: (line: string) => void): Promise<void> {
+  const webcontainer = await getWebContainer();
+  const normalizedPath = normalizePath(path);
+
+  try {
+    await webcontainer.fs.rm(normalizedPath);
+    onLog(`Deleted ${normalizedPath} from WebContainer.\n`);
+  } catch {
+    onLog(`Skipped deleting ${normalizedPath}; file was not found in WebContainer.\n`);
+  }
+}
+
+export async function renameFileInWebContainer(
+  oldPath: string,
+  newPath: string,
+  onLog: (line: string) => void,
+): Promise<void> {
+  const webcontainer = await getWebContainer();
+  const normalizedOldPath = normalizePath(oldPath);
+  const normalizedNewPath = normalizePath(newPath);
+
+  await ensureParentDirectory(webcontainer, normalizedNewPath);
+  try {
+    await webcontainer.fs.rename(normalizedOldPath, normalizedNewPath);
+    onLog(`Renamed ${normalizedOldPath} to ${normalizedNewPath} in WebContainer.\n`);
+  } catch {
+    onLog(`Skipped renaming ${normalizedOldPath}; file was not found in WebContainer.\n`);
+  }
+}
+
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\/+/, "");
 }

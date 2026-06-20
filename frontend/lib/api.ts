@@ -45,6 +45,25 @@ export type ProjectFileContentResponse = {
   content: string;
 };
 
+export type TypeScriptDiagnostic = {
+  file: string;
+  line: number;
+  col: number;
+  code: string;
+  message: string;
+};
+
+export type ProjectDiagnosticsResponse = {
+  project_id: string;
+  status: "idle" | "running" | "passed" | "failed";
+  build_log: string;
+  typescript_errors: TypeScriptDiagnostic[];
+  runtime_errors: string[];
+  warnings: ProjectWarning[];
+  preview_url: string | null;
+  updated_at: string | null;
+};
+
 async function parseError(response: Response): Promise<string> {
   try {
     const data = (await response.json()) as { detail?: string | { msg: string }[] };
@@ -157,6 +176,77 @@ export async function saveProjectFile(
   if (!response.ok) {
     throw new Error(await parseError(response));
   }
+}
+
+export async function createProjectFile(
+  projectId: string,
+  path: string,
+  content: string = "",
+): Promise<void> {
+  const response = await fetch(`${API_URL}/api/projects/${projectId}/files/content`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+}
+
+export async function renameProjectFile(
+  projectId: string,
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  const response = await fetch(`${API_URL}/api/projects/${projectId}/files/content`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ old_path: oldPath, new_path: newPath }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+}
+
+export async function deleteProjectFile(projectId: string, path: string): Promise<void> {
+  const response = await fetch(
+    `${API_URL}/api/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`,
+    {
+      method: "DELETE",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+}
+
+export async function getProjectDiagnostics(projectId: string): Promise<ProjectDiagnosticsResponse> {
+  const response = await fetch(`${API_URL}/api/projects/${projectId}/diagnostics`);
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return response.json() as Promise<ProjectDiagnosticsResponse>;
+}
+
+export async function runProjectBuild(projectId: string): Promise<ProjectDiagnosticsResponse> {
+  const response = await fetchWithTimeout(
+    `${API_URL}/api/projects/${projectId}/build`,
+    {
+      method: "POST",
+    },
+    CHAT_TIMEOUT_MS,
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return response.json() as Promise<ProjectDiagnosticsResponse>;
 }
 
 export function resolvePreviewUrl(

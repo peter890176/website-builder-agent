@@ -18,3 +18,29 @@ class ProjectFileSaveRequest(BaseModel):
 class ProjectFileSaveResponse(BaseModel):
     path: str
     message: str = "File saved"
+
+
+class ProjectFileCreateRequest(BaseModel):
+    path: str = Field(..., min_length=1)
+    content: str = ""
+
+
+class ProjectFileCreateResponse(BaseModel):
+    path: str
+    message: str = "File created"
+
+
+class ProjectFileRenameRequest(BaseModel):
+    old_path: str = Field(..., min_length=1)
+    new_path: str = Field(..., min_length=1)
+
+
+class ProjectFileRenameResponse(BaseModel):
+    old_path: str
+    new_path: str
+    message: str = "File renamed"
+
+
+class ProjectFileDeleteResponse(BaseModel):
+    path: str
+    message: str = "File deleted"

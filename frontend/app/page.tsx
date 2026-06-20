@@ -1,19 +1,28 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 
 import {
+  createProjectFile,
   createProject,
+  deleteProjectFile,
+  getProjectDiagnostics,
   listProjectFiles,
   readProjectFile,
+  renameProjectFile,
   resolvePreviewUrl,
+  runProjectBuild,
   saveProjectFile,
   sendChat,
   type ChatResponse,
+  type ProjectDiagnosticsResponse,
 } from "@/lib/api";
 import {
   bootViteReactProject,
+  deleteFileFromWebContainer,
   getWebContainer,
+  renameFileInWebContainer,
   writeFilesToWebContainer,
 } from "@/lib/webcontainer/runtime";
 
@@ -21,6 +30,31 @@ type PromptOption = {
   label: string;
   description?: string;
 };
+
+type FileTreeNode = {
+  name: string;
+  path: string;
+  type: "file" | "folder";
+  children: FileTreeNode[];
+};
+
+type MonacoEditorInstance = {
+  addCommand: (keybinding: number, handler: () => void) => void;
+};
+
+type MonacoApi = {
+  KeyMod: { CtrlCmd: number };
+  KeyCode: { KeyS: number };
+};
+
+const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((mod) => mod.default), {
+  ssr: false,
+  loading: () => (
+    <div className="flex min-h-[320px] flex-1 items-center justify-center bg-zinc-950 text-sm text-zinc-400">
+      Monaco Editor 載入中...
+    </div>
+  ),
+});
 
 const WEBSITE_TYPE_OPTIONS: PromptOption[] = [
   { label: "品牌形象官網", description: "公司、工作室、個人品牌、顧問服務" },
@@ -87,6 +121,105 @@ function normalizeTerminalLog(line: string): string {
     .replace(/[^\S\r\n]{80,}/g, " ");
 }
 
+function buildFileTree(files: string[]): FileTreeNode[] {
+  const root: FileTreeNode[] = [];
+
+  for (const file of files) {
+    const parts = file.split("/");
+    let currentLevel = root;
+    let currentPath = "";
+
+    parts.forEach((part, index) => {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      const isFile = index === parts.length - 1;
+      let node = currentLevel.find((item) => item.name === part && item.type === (isFile ? "file" : "folder"));
+
+      if (!node) {
+        node = {
+          name: part,
+          path: currentPath,
+          type: isFile ? "file" : "folder",
+          children: [],
+        };
+        currentLevel.push(node);
+        currentLevel.sort((a, b) => {
+          if (a.type !== b.type) {
+            return a.type === "folder" ? -1 : 1;
+          }
+          return a.name.localeCompare(b.name);
+        });
+      }
+
+      currentLevel = node.children;
+    });
+  }
+
+  return root;
+}
+
+function defaultFileContent(path: string): string {
+  if (path.endsWith(".tsx") || path.endsWith(".jsx")) {
+    const componentName = path
+      .split("/")
+      .pop()
+      ?.replace(/\.[^.]+$/, "")
+      .replace(/[^a-zA-Z0-9]/g, "") || "Component";
+
+    return [
+      'import React from "react";',
+      "",
+      `export function ${componentName}() {`,
+      "  return <div>New component</div>;",
+      "}",
+      "",
+    ].join("\n");
+  }
+
+  if (path.endsWith(".ts") || path.endsWith(".js")) {
+    return "export {};\n";
+  }
+
+  if (path.endsWith(".css")) {
+    return "";
+  }
+
+  if (path.endsWith(".json")) {
+    return "{}\n";
+  }
+
+  return "";
+}
+
+function languageForFile(path: string | null): string {
+  if (!path) {
+    return "plaintext";
+  }
+
+  if (path.endsWith(".tsx") || path.endsWith(".jsx")) {
+    return "typescript";
+  }
+  if (path.endsWith(".ts")) {
+    return "typescript";
+  }
+  if (path.endsWith(".js")) {
+    return "javascript";
+  }
+  if (path.endsWith(".css")) {
+    return "css";
+  }
+  if (path.endsWith(".json") || path.endsWith(".geojson")) {
+    return "json";
+  }
+  if (path.endsWith(".html")) {
+    return "html";
+  }
+  if (path.endsWith(".svg")) {
+    return "xml";
+  }
+
+  return "plaintext";
+}
+
 function buildWebsitePrompt({
   websiteType,
   designStyle,
@@ -149,6 +282,8 @@ export default function BuilderPage() {
   const [previewKey, setPreviewKey] = useState(0);
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [openFiles, setOpenFiles] = useState<string[]>([]);
+  const [fileSearch, setFileSearch] = useState("");
   const [fileContent, setFileContent] = useState("");
   const [savedFileContent, setSavedFileContent] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
@@ -158,10 +293,28 @@ export default function BuilderPage() {
   const [webLogs, setWebLogs] = useState<string[]>([]);
   const [webBooting, setWebBooting] = useState(false);
   const [webError, setWebError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<ProjectDiagnosticsResponse | null>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const saveCurrentFileRef = useRef<() => void>(() => {});
 
   const fileIsDirty = selectedFile !== null && fileContent !== savedFileContent;
   const activePreviewUrl = webPreviewUrl ?? previewUrl;
   const previewSource = webPreviewUrl ? "live" : previewUrl ? "verified" : "none";
+  const changedFiles = result?.changed_files ?? [];
+  const filteredProjectFiles = useMemo(() => {
+    const query = fileSearch.trim().toLowerCase();
+    if (!query) {
+      return projectFiles;
+    }
+    return projectFiles.filter((file) => file.toLowerCase().includes(query));
+  }, [fileSearch, projectFiles]);
+  const fileTree = useMemo(() => buildFileTree(filteredProjectFiles), [filteredProjectFiles]);
+  const hasBuildDiagnostics = Boolean(
+    projectId
+      || diagnostics
+      || (result && (result.build_log || result.build_attempts > 0 || result.fix_attempts > 0 || result.warnings.length > 0)),
+  );
 
   const finalPrompt = useMemo(() => {
     const selectedSections = [...sections, ...splitCustomItems(customSections)];
@@ -247,9 +400,33 @@ export default function BuilderPage() {
     }
   }, [projectId]);
 
+  const refreshDiagnostics = useCallback(async () => {
+    if (!projectId) {
+      return;
+    }
+
+    try {
+      setDiagnosticsError(null);
+      const nextDiagnostics = await getProjectDiagnostics(projectId);
+      setDiagnostics(nextDiagnostics);
+    } catch (err: unknown) {
+      setDiagnosticsError(err instanceof Error ? err.message : "無法載入 diagnostics");
+    }
+  }, [projectId]);
+
   useEffect(() => {
-    void refreshProjectFiles();
+    const timer = window.setTimeout(() => {
+      void refreshProjectFiles();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [refreshProjectFiles]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refreshDiagnostics();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshDiagnostics]);
 
   async function openProjectFile(path: string) {
     if (!projectId || path === selectedFile) {
@@ -266,6 +443,7 @@ export default function BuilderPage() {
     try {
       const file = await readProjectFile(projectId, path);
       setSelectedFile(file.path);
+      setOpenFiles((current) => current.includes(file.path) ? current : [...current, file.path]);
       setFileContent(file.content);
       setSavedFileContent(file.content);
     } catch (err: unknown) {
@@ -275,7 +453,7 @@ export default function BuilderPage() {
     }
   }
 
-  async function saveCurrentFile() {
+  const saveCurrentFile = useCallback(async () => {
     if (!projectId || !selectedFile) {
       return;
     }
@@ -302,6 +480,181 @@ export default function BuilderPage() {
     } finally {
       setFileSaving(false);
     }
+  }, [fileContent, projectId, refreshProjectFiles, selectedFile, webPreviewUrl]);
+
+  useEffect(() => {
+    saveCurrentFileRef.current = () => {
+      if (selectedFile && fileIsDirty && !fileSaving && !fileLoading) {
+        void saveCurrentFile();
+      }
+    };
+  }, [fileIsDirty, fileLoading, fileSaving, saveCurrentFile, selectedFile]);
+
+  async function runBackendBuild() {
+    if (!projectId) {
+      return;
+    }
+
+    setDiagnosticsLoading(true);
+    setDiagnosticsError(null);
+
+    try {
+      const nextDiagnostics = await runProjectBuild(projectId);
+      setDiagnostics(nextDiagnostics);
+      if (nextDiagnostics.preview_url) {
+        const version = Date.now();
+        setPreviewKey(version);
+        setPreviewUrl(resolvePreviewUrl(nextDiagnostics.preview_url, version));
+      }
+    } catch (err: unknown) {
+      setDiagnosticsError(err instanceof Error ? err.message : "後端驗證失敗");
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    function handleSaveShortcut(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (selectedFile && fileIsDirty && !fileSaving && !fileLoading) {
+          void saveCurrentFile();
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleSaveShortcut);
+    return () => window.removeEventListener("keydown", handleSaveShortcut);
+  }, [fileIsDirty, fileLoading, fileSaving, saveCurrentFile, selectedFile]);
+
+  async function createNewFile() {
+    if (!projectId) {
+      return;
+    }
+
+    const path = window.prompt("輸入新檔案路徑，例如 src/components/Hero.tsx");
+    const normalizedPath = path?.trim().replace(/\\/g, "/");
+    if (!normalizedPath) {
+      return;
+    }
+
+    if (fileIsDirty && !window.confirm("目前檔案尚未儲存，建立新檔案後會切換編輯器，確定繼續嗎？")) {
+      return;
+    }
+
+    const content = defaultFileContent(normalizedPath);
+    setFileSaving(true);
+    setFileError(null);
+
+    try {
+      await createProjectFile(projectId, normalizedPath, content);
+      await refreshProjectFiles();
+      setSelectedFile(normalizedPath);
+      setOpenFiles((current) => current.includes(normalizedPath) ? current : [...current, normalizedPath]);
+      setFileContent(content);
+      setSavedFileContent(content);
+
+      if (webPreviewUrl) {
+        await writeFilesToWebContainer([{ path: normalizedPath, content }], {
+          onLog: (line) => setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
+          onServerReady: (url) => setWebPreviewUrl(url),
+        });
+      }
+    } catch (err: unknown) {
+      setFileError(err instanceof Error ? err.message : "無法建立檔案");
+    } finally {
+      setFileSaving(false);
+    }
+  }
+
+  async function renameCurrentFile() {
+    if (!projectId || !selectedFile) {
+      return;
+    }
+
+    const path = window.prompt("輸入新的檔案路徑", selectedFile);
+    const normalizedPath = path?.trim().replace(/\\/g, "/");
+    if (!normalizedPath || normalizedPath === selectedFile) {
+      return;
+    }
+
+    setFileSaving(true);
+    setFileError(null);
+
+    try {
+      await renameProjectFile(projectId, selectedFile, normalizedPath);
+      await refreshProjectFiles();
+
+      if (webPreviewUrl) {
+        await renameFileInWebContainer(selectedFile, normalizedPath, (line) =>
+          setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
+        );
+      }
+
+      setSelectedFile(normalizedPath);
+      setOpenFiles((current) => current.map((file) => file === selectedFile ? normalizedPath : file));
+    } catch (err: unknown) {
+      setFileError(err instanceof Error ? err.message : "無法重新命名檔案");
+    } finally {
+      setFileSaving(false);
+    }
+  }
+
+  async function deleteCurrentFile() {
+    if (!projectId || !selectedFile) {
+      return;
+    }
+
+    if (!window.confirm(`確定要刪除 ${selectedFile} 嗎？此操作無法復原。`)) {
+      return;
+    }
+
+    setFileSaving(true);
+    setFileError(null);
+
+    try {
+      const deletingPath = selectedFile;
+      await deleteProjectFile(projectId, deletingPath);
+      await refreshProjectFiles();
+
+      if (webPreviewUrl) {
+        await deleteFileFromWebContainer(deletingPath, (line) =>
+          setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
+        );
+      }
+
+      setSelectedFile(null);
+      setOpenFiles((current) => current.filter((file) => file !== deletingPath));
+      setFileContent("");
+      setSavedFileContent("");
+    } catch (err: unknown) {
+      setFileError(err instanceof Error ? err.message : "無法刪除檔案");
+    } finally {
+      setFileSaving(false);
+    }
+  }
+
+  async function closeOpenFile(path: string) {
+    if (path === selectedFile && fileIsDirty && !window.confirm("目前檔案尚未儲存，確定要關閉嗎？")) {
+      return;
+    }
+
+    const nextOpenFiles = openFiles.filter((file) => file !== path);
+    setOpenFiles(nextOpenFiles);
+
+    if (path !== selectedFile) {
+      return;
+    }
+
+    const nextFile = nextOpenFiles[nextOpenFiles.length - 1];
+    if (nextFile) {
+      await openProjectFile(nextFile);
+      return;
+    }
+
+    setSelectedFile(null);
+    setFileContent("");
+    setSavedFileContent("");
   }
 
   async function startWebContainerMvp() {
@@ -422,6 +775,7 @@ export default function BuilderPage() {
       setPreviewUrl(resolvePreviewUrl(response.preview_url, version));
       await refreshProjectFiles();
       await syncChatResponseToWebContainer(response);
+      await refreshDiagnostics();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "生成失敗");
     } finally {
@@ -450,12 +804,48 @@ export default function BuilderPage() {
       setPreviewUrl(resolvePreviewUrl(response.preview_url, version));
       await refreshProjectFiles();
       await syncChatResponseToWebContainer(response);
+      await refreshDiagnostics();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "生成失敗");
     } finally {
       setLoading(false);
       setLoadingHint("生成中...");
     }
+  }
+
+  function renderFileTree(nodes: FileTreeNode[], depth = 0): ReactNode {
+    return nodes.map((node) => {
+      if (node.type === "folder") {
+        return (
+          <div key={node.path}>
+            <div
+              className="px-2 py-1.5 font-mono text-xs font-medium text-zinc-500"
+              style={{ paddingLeft: `${8 + depth * 12}px` }}
+            >
+              {node.name}/
+            </div>
+            {renderFileTree(node.children, depth + 1)}
+          </div>
+        );
+      }
+
+      return (
+        <button
+          key={node.path}
+          type="button"
+          onClick={() => void openProjectFile(node.path)}
+          className={`block w-full rounded-lg px-2 py-1.5 text-left font-mono text-xs transition ${
+            selectedFile === node.path
+              ? "bg-zinc-900 text-white"
+              : "text-zinc-700 hover:bg-white"
+          }`}
+          style={{ paddingLeft: `${8 + depth * 12}px` }}
+          disabled={fileLoading || fileSaving}
+        >
+          {node.name}
+        </button>
+      );
+    });
   }
 
   return (
@@ -782,52 +1172,137 @@ export default function BuilderPage() {
           </div>
 
           <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+            <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-sm font-medium text-zinc-700">IDE</h2>
                 <p className="mt-1 text-xs text-zinc-500">
                   直接查看與修改目前專案檔案。儲存後可再用微調或重新生成更新預覽。
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void refreshProjectFiles()}
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
-                disabled={!projectId || fileLoading || fileSaving}
-              >
-                重新整理
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void createNewFile()}
+                  className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
+                  disabled={!projectId || fileLoading || fileSaving}
+                >
+                  新增檔案
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void renameCurrentFile()}
+                  className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
+                  disabled={!selectedFile || fileLoading || fileSaving}
+                >
+                  重新命名
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void deleteCurrentFile()}
+                  className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:text-red-300"
+                  disabled={!selectedFile || fileLoading || fileSaving}
+                >
+                  刪除
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void refreshProjectFiles()}
+                  className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
+                  disabled={!projectId || fileLoading || fileSaving}
+                >
+                  重新整理
+                </button>
+              </div>
             </div>
+
+            {changedFiles.length > 0 ? (
+              <div className="border-b border-zinc-200 bg-emerald-50 px-4 py-3">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-emerald-900">
+                      AI 已更新 {changedFiles.length} 個檔案
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-emerald-800">
+                      這些檔案已儲存在 backend workspace，並同步到 WebContainer 觸發即時預覽。
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-emerald-800">
+                    {webPreviewUrl ? "Live 已同步" : "等待 Live Preview"}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {changedFiles.map((file) => (
+                    <button
+                      key={file.path}
+                      type="button"
+                      onClick={() => void openProjectFile(file.path)}
+                      className="rounded-full border border-emerald-200 bg-white px-3 py-1 font-mono text-xs text-emerald-900 transition hover:border-emerald-400 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:text-emerald-300"
+                      disabled={fileLoading || fileSaving}
+                    >
+                      {file.path}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="grid min-h-[360px] overflow-hidden lg:grid-cols-[240px_1fr]">
               <div className="border-b border-zinc-200 bg-zinc-50 lg:border-b-0 lg:border-r">
+                <div className="border-b border-zinc-200 p-2">
+                  <input
+                    value={fileSearch}
+                    onChange={(event) => setFileSearch(event.target.value)}
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs outline-none ring-zinc-400 focus:ring-2"
+                    placeholder="搜尋檔案..."
+                    disabled={fileLoading || fileSaving}
+                  />
+                </div>
                 <div className="max-h-[360px] overflow-auto p-2">
-                  {projectFiles.length > 0 ? (
-                    projectFiles.map((file) => (
-                      <button
-                        key={file}
-                        type="button"
-                        onClick={() => void openProjectFile(file)}
-                        className={`block w-full rounded-lg px-2 py-1.5 text-left font-mono text-xs transition ${
-                          selectedFile === file
-                            ? "bg-zinc-900 text-white"
-                            : "text-zinc-700 hover:bg-white"
-                        }`}
-                        style={{ paddingLeft: `${8 + Math.max(file.split("/").length - 1, 0) * 10}px` }}
-                        disabled={fileLoading || fileSaving}
-                      >
-                        {file}
-                      </button>
-                    ))
+                  {fileTree.length > 0 ? (
+                    renderFileTree(fileTree)
                   ) : (
                     <p className="px-2 py-3 text-xs leading-5 text-zinc-500">
-                      尚未找到可編輯檔案。建立專案後會自動載入 template 檔案。
+                      {projectFiles.length > 0 ? "沒有符合搜尋的檔案。" : "尚未找到可編輯檔案。建立專案後會自動載入 template 檔案。"}
                     </p>
                   )}
                 </div>
               </div>
 
               <div className="flex min-h-[360px] flex-col">
+                {openFiles.length > 0 ? (
+                  <div className="flex gap-1 overflow-x-auto border-b border-zinc-200 bg-zinc-100 px-2 py-1">
+                    {openFiles.map((file) => (
+                      <div
+                        key={file}
+                        className={`flex max-w-56 items-center gap-2 rounded-lg px-2 py-1 text-xs ${
+                          selectedFile === file
+                            ? "bg-white text-zinc-900 shadow-sm"
+                            : "text-zinc-600 hover:bg-white/70"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => void openProjectFile(file)}
+                          className="truncate font-mono"
+                          disabled={fileLoading || fileSaving}
+                          title={file}
+                        >
+                          {file.split("/").pop()}
+                          {selectedFile === file && fileIsDirty ? " *" : ""}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void closeOpenFile(file)}
+                          className="text-zinc-400 hover:text-zinc-900 disabled:text-zinc-300"
+                          disabled={fileLoading || fileSaving}
+                          aria-label={`關閉 ${file}`}
+                        >
+                          x
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-2">
                   <p className="truncate font-mono text-xs text-zinc-600">
                     {selectedFile ?? "尚未選取檔案"}
@@ -844,13 +1319,30 @@ export default function BuilderPage() {
                 </div>
 
                 {selectedFile ? (
-                  <textarea
-                    value={fileContent}
-                    onChange={(event) => setFileContent(event.target.value)}
-                    spellCheck={false}
-                    className="min-h-[320px] flex-1 resize-y border-0 bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-50 outline-none"
-                    disabled={fileLoading || fileSaving}
-                  />
+                  <div className="min-h-[320px] flex-1 overflow-hidden bg-zinc-950">
+                    <MonacoEditor
+                      key={selectedFile}
+                      path={selectedFile}
+                      language={languageForFile(selectedFile)}
+                      theme="vs-dark"
+                      value={fileContent}
+                      onChange={(value: string | undefined) => setFileContent(value ?? "")}
+                      onMount={(editor: MonacoEditorInstance, monaco: MonacoApi) => {
+                        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                          saveCurrentFileRef.current();
+                        });
+                      }}
+                      options={{
+                        automaticLayout: true,
+                        fontSize: 13,
+                        minimap: { enabled: false },
+                        readOnly: fileLoading || fileSaving,
+                        scrollBeyondLastLine: false,
+                        tabSize: 2,
+                        wordWrap: "on",
+                      }}
+                    />
+                  </div>
                 ) : (
                   <div className="flex min-h-[320px] flex-1 items-center justify-center px-6 text-center text-sm text-zinc-500">
                     從左側選擇一個檔案開始編輯。
@@ -865,6 +1357,93 @@ export default function BuilderPage() {
               </div>
             ) : null}
           </div>
+
+          {hasBuildDiagnostics ? (
+            <div className="rounded-xl border border-zinc-200 bg-white shadow-sm">
+              <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-medium text-zinc-700">Build Diagnostics</h2>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        diagnostics?.status === "passed"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : diagnostics?.status === "failed"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-zinc-100 text-zinc-500"
+                      }`}
+                    >
+                      {diagnostics?.status ?? "idle"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-zinc-500">
+                    後端 production build 的可信驗證結果。Live Preview 會先更新，這裡用來確認可正式輸出。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void runBackendBuild()}
+                  className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
+                  disabled={!projectId || diagnosticsLoading}
+                >
+                  {diagnosticsLoading ? "驗證中..." : "重新驗證"}
+                </button>
+              </div>
+              <div className="space-y-3 p-4 text-sm">
+                {diagnosticsError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {diagnosticsError}
+                  </div>
+                ) : null}
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+                    <p className="text-xs text-zinc-500">Build attempts</p>
+                    <p className="mt-1 font-mono text-zinc-900">{result?.build_attempts ?? 0}</p>
+                  </div>
+                  <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+                    <p className="text-xs text-zinc-500">TypeScript errors</p>
+                    <p className="mt-1 font-mono text-zinc-900">{diagnostics?.typescript_errors.length ?? 0}</p>
+                  </div>
+                  <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+                    <p className="text-xs text-zinc-500">Warnings</p>
+                    <p className="mt-1 font-mono text-zinc-900">{diagnostics?.warnings.length ?? result?.warnings.length ?? 0}</p>
+                  </div>
+                </div>
+
+                {diagnostics?.typescript_errors.length ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                    <p className="font-medium">TypeScript 錯誤</p>
+                    <ul className="mt-2 space-y-1">
+                      {diagnostics.typescript_errors.map((item) => (
+                        <li key={`${item.file}-${item.line}-${item.col}-${item.code}`}>
+                          <span className="font-mono">
+                            {item.file}:{item.line}:{item.col} TS{item.code}
+                          </span>
+                          {" "}
+                          {item.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {(diagnostics?.build_log || result?.build_log) ? (
+                  <details className="rounded-lg border border-zinc-200 bg-zinc-950">
+                    <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-zinc-100">
+                      查看 build log
+                    </summary>
+                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all px-3 pb-3 text-xs leading-5 text-zinc-100">
+                      {diagnostics?.build_log || result?.build_log}
+                    </pre>
+                  </details>
+                ) : (
+                  <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
+                    目前沒有 build log。
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
