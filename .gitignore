@@ -29,8 +29,14 @@ frontend/.pnpm-debug.log*
 
 # Backend (Python)
 backend/.venv/
+backend/.playwright-browsers/
 backend/__pycache__/
 backend/*.py[cod]
 backend/.pytest_cache/
 backend/.mypy_cache/
 backend/.ruff_cache/
+workspace/
+workspace/**/node_modules/
+workspace/**/dist/
+backend/templates/vite-react-ts/node_modules/
+backend/templates/vite-react-ts/dist/

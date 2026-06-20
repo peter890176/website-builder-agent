@@ -20,6 +20,7 @@
 website-builder-agent/
 ├── README.md           # 本說明
 ├── .gitignore
+├── workspace/          # 生成的 Vite 專案（勿提交）
 ├── frontend/           # Next.js 應用
 │   ├── app/
 │   ├── package.json
@@ -51,6 +52,8 @@ cd backend
 .\.venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload
 ```
+
+`workspace/` 已移至專案根目錄，避免 `--reload` 因 `node_modules` 變更而不斷重啟。
 
 API 文件：http://127.0.0.1:8000/docs  
 根路徑範例：`GET /` 回傳 JSON 問候訊息。
