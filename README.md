@@ -1,51 +1,51 @@
 ﻿# website-builder-agent
 
-全端網站建置代理專案：以 Next.js 前端搭配 FastAPI 後端，並預留 LangGraph / LangChain / OpenAI 代理能力。
+Full-stack website builder agent project with a Next.js frontend, FastAPI backend, and LangGraph / LangChain / OpenAI agent capabilities.
 
-## 專案概覽
+## Project Overview
 
-`website-builder-agent` 旨在協助以 AI 代理流程建置與迭代網站。目前包含可運行的前端樣板與最小後端 API，後續可在後端整合 LangGraph 工作流與 LangChain 工具鏈。
+`website-builder-agent` helps build and iterate websites with AI agent workflows. It includes a working frontend app, backend API, project workspace persistence, WebContainer live preview, and verification/deployment foundations.
 
-## 架構
+## Architecture
 
-| 層級 | 技術 |
+| Layer | Technology |
 |------|------|
-| 前端 | Next.js（App Router）、TypeScript、Tailwind CSS |
-| 後端 | FastAPI、Uvicorn |
-| 代理 | LangGraph、LangChain、`langchain-openai`（需設定 OpenAI API） |
+| Frontend | Next.js App Router, TypeScript, Tailwind CSS |
+| Backend | FastAPI, Uvicorn |
+| Agent | LangGraph, LangChain, `langchain-openai` with OpenAI API configuration |
 
-## 資料夾結構
+## Folder Structure
 
 ```
 website-builder-agent/
-├── README.md           # 本說明
+├── README.md           # Project documentation
 ├── .gitignore
-├── workspace/          # 生成的 Vite 專案（勿提交）
-├── frontend/           # Next.js 應用
+├── workspace/          # Generated Vite projects; do not commit
+├── frontend/           # Next.js app
 │   ├── app/
 │   ├── package.json
 │   └── ...
 └── backend/
     ├── .gitignore
-    ├── .venv/          # Python 虛擬環境（勿提交）
+    ├── .venv/          # Python virtual environment; do not commit
     ├── requirements.txt
     └── app/
         ├── __init__.py
-        └── main.py     # FastAPI 進入點
+        └── main.py     # FastAPI entry point
 ```
 
-## 執行前端
+## Run Frontend
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-預設開發伺服器：http://localhost:3000
+Default dev server: http://localhost:3000
 
-## 執行後端
+## Run Backend
 
-在 Windows PowerShell：
+In Windows PowerShell:
 
 ```powershell
 cd backend
@@ -53,19 +53,19 @@ cd backend
 uvicorn app.main:app --reload
 ```
 
-`workspace/` 已移至專案根目錄，避免 `--reload` 因 `node_modules` 變更而不斷重啟。
+`workspace/` lives at the repository root so `--reload` does not restart repeatedly when `node_modules` changes.
 
-API 文件：http://127.0.0.1:8000/docs  
-根路徑範例：`GET /` 回傳 JSON 問候訊息。
+API docs: http://127.0.0.1:8000/docs  
+Root route example: `GET /` returns a JSON greeting.
 
-## 環境變數
+## Environment Variables
 
-使用 OpenAI 相關功能時，請設定：
+Set the following variable for OpenAI-powered features:
 
-- `OPENAI_API_KEY`：OpenAI API 金鑰
+- `OPENAI_API_KEY`: OpenAI API key
 
-建議在 `backend/.env` 中設定（此檔已列入 `.gitignore`，請勿提交至版本庫）。亦可於系統環境變數中設定。
+Recommended location: `backend/.env`. This file is ignored by git and must not be committed. You can also configure the key through system environment variables.
 
-## 授權與貢獻
+## License and Contributing
 
-依專案需求自行補充授權與貢獻指南。
+Add license and contribution guidelines according to project requirements.

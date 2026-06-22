@@ -86,7 +86,10 @@ def find_browser_runtime_hazards(project_dir: Path, dist_dir: Path | None = None
     if dist_dir and dist_dir.is_dir():
         for path in dist_dir.rglob("*"):
             if path.is_file() and path.suffix in DIST_SUFFIXES:
-                rel = path.relative_to(project_dir).as_posix()
+                try:
+                    rel = path.relative_to(project_dir).as_posix()
+                except ValueError:
+                    rel = f"dist/{path.relative_to(dist_dir).as_posix()}"
                 hazards.extend(_scan_file(path, rel, RUNTIME_HAZARDS))
 
     return hazards

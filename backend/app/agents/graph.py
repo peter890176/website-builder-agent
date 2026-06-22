@@ -123,6 +123,8 @@ Rules:
 - Return ONLY the file contents. No markdown fences, no explanation.
 
 - TypeScript/React files must compile with `tsc -b` and `vite build`.
+- The template uses the React 17+ JSX transform. Do not add `import React from "react";`
+  unless the `React` identifier is explicitly used in code.
 
 - You may import local files and npm packages listed in the plan.
 
@@ -138,7 +140,7 @@ Rules:
 
 - Do not reference local binary/media files unless they are explicitly generated or provided.
   If music, video, map, menu, contact, price, hours, or other facts are missing, show a
-  placeholder/disabled state such as "待補" or "資料待確認" instead of inventing facts.
+  placeholder/disabled state such as "To be provided" or "Needs confirmation" instead of inventing facts.
 
 - JSON must be valid JSON.
 
@@ -1607,32 +1609,32 @@ def finalize(state: AgentState) -> dict:
 
 
 
-    reply = f"已生成 {len(files)} 個檔案，production build 通過。"
+    reply = f"Generated {len(files)} files and passed the production build."
     if state.get("reply"):
         reply += f" {state['reply']}"
     if warnings:
-        reply += f" 但有 {len(warnings)} 個資訊/資產警告，已保留預覽並回傳 warnings 供前端顯示。"
+        reply += f" There are {len(warnings)} information or asset warnings; the preview was preserved and warnings were returned to the frontend."
 
     if fix_attempts or dep_attempts:
 
-        reply += "（自動修復"
+        reply += " (auto-repaired"
 
         if fix_attempts:
 
-            reply += f" {fix_attempts} 次"
+            reply += f" {fix_attempts} times"
 
         if dep_attempts:
 
-            reply += f"，npm 安裝重試 {dep_attempts} 次"
+            reply += f", npm install retried {dep_attempts} times"
 
         if build_attempts:
 
-            reply += f"，歷經 {build_attempts} 次 build 失敗後成功"
+            reply += f", succeeded after {build_attempts} failed build attempts"
         if runtime_attempts:
 
-            reply += f"，runtime smoke 重試 {runtime_attempts} 次"
+            reply += f", runtime smoke retried {runtime_attempts} times"
 
-        reply += "）"
+        reply += ")"
 
 
 

@@ -11,10 +11,6 @@ from pathlib import Path
 from app.agents.runtime_checks import find_browser_runtime_hazards, format_runtime_hazards
 from app.services.scaffold import ensure_npm_dependencies, is_vite_project
 
-from app.services.workspace import get_dist_dir
-
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -100,6 +96,41 @@ def _clear_tsbuildinfo(project_dir: Path) -> None:
         info.unlink(missing_ok=True)
 
 
+def normalize_react_default_imports(project_dir: Path) -> list[Path]:
+    changed: list[Path] = []
+    src_dir = project_dir / "src"
+    if not src_dir.is_dir():
+        return changed
+
+    for path in src_dir.rglob("*.tsx"):
+        original = path.read_text(encoding="utf-8")
+        normalized = _remove_react_default_import(original)
+        if normalized != original:
+            path.write_text(normalized, encoding="utf-8")
+            changed.append(path)
+
+    return changed
+
+
+def _remove_react_default_import(content: str) -> str:
+    lines = content.splitlines()
+    fixed_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped in {'import React from "react";', "import React from 'react';"}:
+            continue
+        if stripped.startswith("import React, {") and stripped.endswith('} from "react";'):
+            fixed_lines.append(line.replace("import React, ", "import ", 1))
+            continue
+        if stripped.startswith("import React, {") and stripped.endswith("} from 'react';"):
+            fixed_lines.append(line.replace("import React, ", "import ", 1))
+            continue
+        fixed_lines.append(line)
+
+    return "\n".join(fixed_lines) + ("\n" if content.endswith("\n") else "")
+
+
 
 
 
@@ -115,9 +146,13 @@ def build_vite_project(project_dir: Path, project_id: str) -> Path:
 
     env = {**os.environ}
 
+    ensure_npm_dependencies(project_dir)
+
     tsc = _local_bin(project_dir, "tsc")
 
     vite = _local_bin(project_dir, "vite")
+
+    eslint = _local_bin(project_dir, "eslint")
 
 
 
@@ -129,11 +164,21 @@ def build_vite_project(project_dir: Path, project_id: str) -> Path:
 
         raise RuntimeError("Vite not found in node_modules")
 
+    if not Path(eslint).is_file():
+
+        raise RuntimeError("ESLint not found in node_modules")
 
 
-    ensure_npm_dependencies(project_dir)
 
     _clear_tsbuildinfo(project_dir)
+
+    normalized_files = normalize_react_default_imports(project_dir)
+    if normalized_files:
+        logger.info("Source normalization updated %s file(s)", len(normalized_files))
+
+    logger.info("Running lint auto-fix for project %s", project_id)
+
+    _run_command([eslint, ".", "--fix"], project_dir, env=env)
 
 
 
@@ -149,7 +194,7 @@ def build_vite_project(project_dir: Path, project_id: str) -> Path:
 
 
 
-    dist_dir = get_dist_dir(project_id)
+    dist_dir = project_dir / "dist"
 
     if not (dist_dir / "index.html").is_file():
 

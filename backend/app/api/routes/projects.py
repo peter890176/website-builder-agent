@@ -5,9 +5,18 @@ from difflib import unified_diff
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 
-from app.agents.graph import website_builder_graph, website_edit_graph
+from app.agents.graph import (
+    generate_files,
+    plan_project,
+    repair_missing_imports,
+    sync_project,
+    website_builder_graph,
+    website_edit_graph,
+)
 from app.agents.imports import normalize_generated_files, normalize_posix_path
 from app.agents.state import AgentState
+from app.agents.tsc_errors import build_fix_hints
+from app.core.config import MAX_BUILD_FIX_ATTEMPTS
 from app.schemas.diagnostics import ProjectDiagnosticsResponse
 from app.schemas.edit_review import (
     ProjectEditApplyRequest,
@@ -29,14 +38,15 @@ from app.schemas.project_file import (
     ProjectFileSaveRequest,
     ProjectFileSaveResponse,
 )
-from app.services.build import try_build_vite_project
-from app.services.build_fix import collect_project_sources
+from app.services.build import normalize_react_default_imports, try_build_vite_project
+from app.services.build_fix import collect_project_sources, request_project_fix
 from app.services.diagnostics import (
     build_diagnostics_from_log,
     load_project_diagnostics,
     save_project_diagnostics,
 )
 from app.services.project_edit import clean_edit_patches, request_project_edit
+from app.services.dependencies import install_planned_dependencies
 from app.services.scaffold import copy_vite_template, ensure_npm_dependencies, scaffold_vite_project
 from app.services.workspace import (
     create_editable_project_file,
@@ -53,6 +63,7 @@ from app.services.workspace import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+VERIFY_REPAIR_ATTEMPTS = MAX_BUILD_FIX_ATTEMPTS
 
 
 @router.post("", response_model=ProjectCreateResponse)
@@ -145,6 +156,74 @@ def post_chat(project_id: str, body: ChatRequest) -> ChatResponse:
     )
 
 
+@router.post("/{project_id}/chat/draft", response_model=ChatResponse)
+def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
+    logger.info("Draft chat started for project %s", project_id)
+
+    try:
+        project_dir = scaffold_vite_project(project_id, install_dependencies=False)
+    except (ValueError, RuntimeError) as exc:
+        status = 400 if isinstance(exc, ValueError) else 500
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    save_project_diagnostics(
+        ProjectDiagnosticsResponse(project_id=project_id, status="drafting")
+    )
+
+    should_edit = body.mode == "edit" or (
+        body.mode == "auto" and collect_project_sources(project_dir)
+    )
+
+    try:
+        if should_edit:
+            result = _run_edit_draft(project_id, body.message, project_dir)
+        else:
+            result = _run_generate_draft(project_id, body.message, project_dir)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    normalized_files = _normalize_project_sources(project_dir)
+    generated_files = {**result.get("generated_files", {}), **normalized_files}
+    changed_files = _changed_files_payload(generated_files, project_dir)
+    files = sorted(generated_files.keys())
+    warnings = result.get("warnings", [])
+
+    save_project_diagnostics(
+        ProjectDiagnosticsResponse(
+            project_id=project_id,
+            status="live_unverified",
+            warnings=warnings,
+        )
+    )
+
+    return ChatResponse(
+        message="Draft ready",
+        reply=result.get("reply", "Draft files are ready for live preview."),
+        project_id=project_id,
+        workspace_path=str(project_dir),
+        files=files,
+        preview_url=None,
+        warnings=warnings,
+        changed_files=changed_files,
+    )
+
+
+@router.post("/{project_id}/verify", response_model=ProjectDiagnosticsResponse)
+def post_project_verify(project_id: str) -> ProjectDiagnosticsResponse:
+    try:
+        save_project_diagnostics(ProjectDiagnosticsResponse(project_id=project_id, status="verifying"))
+        project_dir = scaffold_vite_project(project_id)
+        diagnostics = _verify_project_with_repair(project_id, project_dir)
+        save_project_diagnostics(diagnostics)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        diagnostics = build_diagnostics_from_log(project_id, passed=False, build_log=str(exc))
+        save_project_diagnostics(diagnostics)
+
+    return diagnostics
+
+
 def _changed_files_payload(generated_files: dict[str, str], project_dir) -> list[dict[str, str]]:
     changed: dict[str, str] = {
         normalize_posix_path(path): content
@@ -159,6 +238,147 @@ def _changed_files_payload(generated_files: dict[str, str], project_dir) -> list
         {"path": path, "content": content}
         for path, content in sorted(changed.items())
     ]
+
+
+def _normalize_project_sources(project_dir) -> dict[str, str]:
+    before_sources = collect_project_sources(project_dir)
+    normalize_react_default_imports(project_dir)
+    after_sources = collect_project_sources(project_dir)
+    return {
+        path: content
+        for path, content in after_sources.items()
+        if before_sources.get(path) != content
+    }
+
+
+def _attach_source_changes(
+    diagnostics: ProjectDiagnosticsResponse,
+    before_sources: dict[str, str],
+    project_dir,
+    note: str = "Auto-cleaned project sources",
+) -> None:
+    after_sources = collect_project_sources(project_dir)
+    changed_files = [
+        {"path": path, "content": content}
+        for path, content in sorted(after_sources.items())
+        if before_sources.get(path) != content
+    ]
+
+    if not changed_files:
+        return
+
+    diagnostics.changed_files = changed_files
+    if note not in diagnostics.notes:
+        diagnostics.notes = [*diagnostics.notes, note]
+
+
+def _verify_project_with_repair(project_id: str, project_dir) -> ProjectDiagnosticsResponse:
+    before_sources = collect_project_sources(project_dir)
+    last_diagnostics = ProjectDiagnosticsResponse(project_id=project_id, status="failed")
+
+    for attempt in range(VERIFY_REPAIR_ATTEMPTS + 1):
+        passed, build_log = try_build_vite_project(project_dir, project_id)
+        diagnostics = build_diagnostics_from_log(project_id, passed=passed, build_log=build_log)
+        _attach_source_changes(
+            diagnostics,
+            before_sources,
+            project_dir,
+            note="Source changes applied" if attempt > 0 else "Auto-cleaned project sources",
+        )
+
+        if passed:
+            if attempt > 0:
+                diagnostics.notes = [*diagnostics.notes, "AI repair applied", "Re-ran verify"]
+            return diagnostics
+
+        last_diagnostics = diagnostics
+        if attempt >= VERIFY_REPAIR_ATTEMPTS:
+            break
+
+        try:
+            repaired = _apply_verify_repair(project_id, project_dir, build_log, attempt + 1)
+        except (RuntimeError, ValueError) as exc:
+            logger.exception("Verify AI repair failed for project %s", project_id)
+            last_diagnostics.notes = [*last_diagnostics.notes, f"AI repair failed: {exc}"]
+            break
+        if not repaired:
+            break
+
+    _attach_source_changes(last_diagnostics, before_sources, project_dir, note="Source changes applied")
+    return last_diagnostics
+
+
+def _apply_verify_repair(project_id: str, project_dir, build_log: str, attempt: int) -> bool:
+    logger.info("Starting verify AI repair attempt %s for project %s", attempt, project_id)
+    current_sources = collect_project_sources(project_dir)
+    fix = request_project_fix(
+        project_dir=project_dir,
+        user_message="Repair the current draft so it passes ESLint, TypeScript, and Vite verification.",
+        error_message=build_log,
+        failure_stage="build",
+        attempt=attempt,
+        max_attempts=VERIFY_REPAIR_ATTEMPTS,
+        generated_files=current_sources,
+        build_log=build_log,
+        tsc_hints=build_fix_hints(build_log),
+    )
+
+    changed = False
+    for patch in fix.patches:
+        safe_path = normalize_posix_path(patch.path)
+        write_project_file(project_id, safe_path, patch.content)
+        changed = True
+
+    if fix.npm_dependencies or fix.dev_dependencies:
+        install_planned_dependencies(
+            project_dir,
+            fix.npm_dependencies,
+            collect_project_sources(project_dir),
+            dev_packages=fix.dev_dependencies,
+            legacy_peer_deps=fix.use_legacy_peer_deps,
+        )
+        changed = True
+
+    return changed
+
+
+def _run_generate_draft(project_id: str, message: str, project_dir) -> AgentState:
+    state = _initial_state(message, project_id, project_dir)
+
+    for node in (plan_project, generate_files, repair_missing_imports, sync_project):
+        state = {**state, **node(state)}
+        _raise_if_draft_blocked(state)
+
+    return {
+        **state,
+        "reply": f"Generated {len(state.get('generated_files', {}))} draft files. Live preview updates first, and backend verification runs separately.",
+    }
+
+
+def _run_edit_draft(project_id: str, message: str, project_dir) -> AgentState:
+    current_files = collect_project_sources(project_dir)
+    edit = clean_edit_patches(request_project_edit(project_dir, message))
+    generated = dict(current_files)
+    for patch in edit.patches:
+        safe_path = normalize_posix_path(patch.path)
+        write_project_file(project_id, safe_path, patch.content)
+        generated[safe_path] = patch.content
+
+    return {
+        **_initial_state(message, project_id, project_dir),
+        "generated_files": generated,
+        "files": sorted(generated),
+        "reply": edit.notes or "Generated draft changes.",
+        "warnings": edit.warnings,
+    }
+
+
+def _raise_if_draft_blocked(state: AgentState) -> None:
+    if state.get("error"):
+        raise RuntimeError(state["error"])
+    if state.get("pending_error"):
+        stage = state.get("failure_stage") or "draft"
+        raise RuntimeError(f"Draft stopped at stage '{stage}': {state['pending_error']}")
 
 
 @router.get("/{project_id}/files", response_model=ProjectFileListResponse)
@@ -237,8 +457,10 @@ def delete_project_file_content(project_id: str, path: str) -> ProjectFileDelete
 def post_project_build(project_id: str) -> ProjectDiagnosticsResponse:
     try:
         project_dir = scaffold_vite_project(project_id)
+        before_sources = collect_project_sources(project_dir)
         passed, build_log = try_build_vite_project(project_dir, project_id)
         diagnostics = build_diagnostics_from_log(project_id, passed=passed, build_log=build_log)
+        _attach_source_changes(diagnostics, before_sources, project_dir)
         save_project_diagnostics(diagnostics)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -262,7 +484,17 @@ def post_project_edit_preview(project_id: str, body: ProjectEditPreviewRequest) 
     try:
         project_dir = scaffold_vite_project(project_id, install_dependencies=False)
         current_files = collect_project_sources(project_dir)
-        edit = clean_edit_patches(request_project_edit(project_dir, body.message))
+        edit = clean_edit_patches(
+            request_project_edit(
+                project_dir,
+                body.message,
+                context_files=body.context_files,
+                current_file=body.current_file,
+                selected_text=body.selected_text,
+                selected_range=body.selected_range,
+                diagnostics_summary=body.diagnostics_summary,
+            )
+        )
     except (ValueError, RuntimeError) as exc:
         status = 400 if isinstance(exc, ValueError) else 500
         raise HTTPException(status_code=status, detail=str(exc)) from exc
@@ -298,6 +530,16 @@ def post_project_edit_apply(project_id: str, body: ProjectEditApplyRequest) -> P
             safe_path = normalize_posix_path(patch.path)
             write_project_file(project_id, safe_path, patch.content)
             changed_files.append({"path": safe_path, "content": patch.content})
+        project_dir = ensure_project_dir(project_id)
+        normalized_files = _normalize_project_sources(project_dir)
+        changed_files = [
+            *changed_files,
+            *[
+                {"path": path, "content": content}
+                for path, content in normalized_files.items()
+                if path not in {file["path"] for file in changed_files}
+            ],
+        ]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

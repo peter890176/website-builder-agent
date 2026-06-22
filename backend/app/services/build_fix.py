@@ -29,7 +29,12 @@ When fixing project sync/write errors:
 - If TSX imports ../../assets/foo.svg or ../assets/foo.svg from outside src/, replace the import with a public URL such as `${import.meta.env.BASE_URL}assets/foo.svg`.
 - Do not add npm dependencies for file path/write errors unless the error explicitly names a missing package.
 
-When fixing TypeScript/Vite build errors:
+When fixing TypeScript/Vite/ESLint build errors:
+- ESLint parser errors, Babel parser errors, "Parsing error", "Identifier expected",
+  "Unexpected token", and "An identifier or keyword cannot immediately follow a numeric literal"
+  are source syntax errors. Patch the exact source file and nearby expression named in the log.
+- If an object key starts with a number or contains characters invalid for dot access, use bracket
+  notation such as `theme.spacing["2xl"]` instead of `theme.spacing.2xl`.
 - Build-stage fixes MUST populate error_fixes. Create one error_fixes item for every current
   TypeScript error signature in Build progress diagnostics / Full build log.
 - Each error_fixes item must include file, line, code, diagnosis, evidence_used, change_summary,
@@ -73,7 +78,7 @@ When fixing browser runtime smoke test errors:
 - Fix source files under src/ or public/ only; never patch dist/ output.
 - Treat Browser runtime diagnostics as authoritative. Your patch must implement the listed required_strategy.
 - Do not hallucinate missing information or binary/media assets. If a local media/map/menu/contact
-  asset or fact is missing, change the UI/data to a placeholder, disabled state, or "待補/資料待確認"
+  asset or fact is missing, change the UI/data to a placeholder, disabled state, or "To be provided / Needs confirmation"
   message instead of pretending the asset/fact exists.
 - Use pageerror, console.error, HTTP failures, and empty #root reports as evidence.
 - If the page is blank, look for render-time exceptions, invalid asset URLs, CSS hiding content, or data-shape mismatches.

@@ -10,6 +10,7 @@ export type WebContainerFileChange = {
 let webcontainerInstance: WebContainer | null = null;
 let devProcess: WebContainerProcess | null = null;
 let bootedProject = false;
+const serverReadyListeners: Array<(url: string) => void> = [];
 
 export async function getWebContainer(): Promise<WebContainer> {
   if (!webcontainerInstance) {
@@ -28,8 +29,11 @@ export async function bootViteReactProject({
 }): Promise<WebContainer> {
   const webcontainer = await getWebContainer();
 
+  serverReadyListeners.push(onServerReady);
   webcontainer.on("server-ready", (_port, url) => {
-    onServerReady(url);
+    for (const listener of serverReadyListeners) {
+      listener(url);
+    }
   });
 
   if (!bootedProject) {
@@ -60,6 +64,88 @@ export async function bootViteReactProject({
   }
 
   return webcontainer;
+}
+
+export type InteractiveCommand = {
+  id: string;
+  command: string;
+  args: string[];
+  write: (input: string) => Promise<void>;
+  kill: () => Promise<void>;
+  exit: Promise<number>;
+};
+
+export async function runWebContainerCommand({
+  command,
+  args,
+  onOutput,
+}: {
+  command: string;
+  args: string[];
+  onOutput: (line: string) => void;
+}): Promise<InteractiveCommand> {
+  const webcontainer = await getWebContainer();
+  const process = await webcontainer.spawn(command, args, {
+    terminal: {
+      cols: 120,
+      rows: 30,
+    },
+  });
+  const writer = process.input.getWriter();
+  void pipeProcessOutput(process, onOutput);
+
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    command,
+    args,
+    write: async (input: string) => {
+      await writer.write(input);
+    },
+    kill: async () => {
+      process.kill();
+      try {
+        writer.releaseLock();
+      } catch {
+        // Writer may already be released after process exit.
+      }
+    },
+    exit: process.exit,
+  };
+}
+
+export async function installPackageInWebContainer(
+  packages: string[],
+  onOutput: (line: string) => void,
+): Promise<number> {
+  const command = await runWebContainerCommand({
+    command: "npm",
+    args: ["install", ...packages, "--no-fund", "--no-audit", "--no-progress"],
+    onOutput,
+  });
+  return command.exit;
+}
+
+export async function stopWebContainerDevServer(): Promise<void> {
+  if (!devProcess) {
+    return;
+  }
+  devProcess.kill();
+  await devProcess.exit.catch(() => 1);
+  devProcess = null;
+}
+
+export async function restartWebContainerDevServer({
+  onLog,
+  onServerReady,
+}: {
+  onLog: (line: string) => void;
+  onServerReady: (url: string) => void;
+}): Promise<void> {
+  const webcontainer = await bootViteReactProject({ onLog, onServerReady });
+  await stopWebContainerDevServer();
+  onLog("Restarting Vite dev server...\n");
+  devProcess = await webcontainer.spawn("npm", ["run", "dev"]);
+  void pipeProcessOutput(devProcess, onLog);
 }
 
 export async function writeFilesToWebContainer(
