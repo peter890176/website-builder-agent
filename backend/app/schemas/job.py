@@ -5,12 +5,21 @@ from pydantic import BaseModel, Field
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 JobType = Literal[
+    "website_generation",
+    "ai_edit_preview",
+    "ai_edit_apply",
+    "verification",
     "variant_generation",
     "quality_review",
     "terminal_command",
     "dependency_install",
     "deployment",
+    "snapshot_create",
     "snapshot_restore",
+    "snapshot_delete",
+    "export_zip",
+    "live_preview_boot",
+    "live_preview_sync",
 ]
 
 

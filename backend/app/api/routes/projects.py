@@ -45,6 +45,7 @@ from app.services.diagnostics import (
     load_project_diagnostics,
     save_project_diagnostics,
 )
+from app.services.jobs import append_job_artifact, append_job_log, create_job, update_job
 from app.services.project_edit import clean_edit_patches, request_project_edit
 from app.services.dependencies import install_planned_dependencies
 from app.services.scaffold import copy_vite_template, ensure_npm_dependencies, scaffold_vite_project
@@ -159,13 +160,23 @@ def post_chat(project_id: str, body: ChatRequest) -> ChatResponse:
 @router.post("/{project_id}/chat/draft", response_model=ChatResponse)
 def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
     logger.info("Draft chat started for project %s", project_id)
+    job = create_job(
+        project_id,
+        "website_generation",
+        title="Generate website draft" if body.mode != "edit" else "Generate edit draft",
+    )
+    append_job_log(project_id, job.id, "Preparing project workspace")
+    update_job(project_id, job.id, status="running", progress=5)
 
     try:
         project_dir = scaffold_vite_project(project_id, install_dependencies=False)
     except (ValueError, RuntimeError) as exc:
+        append_job_log(project_id, job.id, str(exc), level="error")
+        update_job(project_id, job.id, status="failed", progress=100, error=str(exc))
         status = 400 if isinstance(exc, ValueError) else 500
         raise HTTPException(status_code=status, detail=str(exc)) from exc
 
+    append_job_log(project_id, job.id, "Marking diagnostics as drafting")
     save_project_diagnostics(
         ProjectDiagnosticsResponse(project_id=project_id, status="drafting")
     )
@@ -176,12 +187,18 @@ def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
 
     try:
         if should_edit:
-            result = _run_edit_draft(project_id, body.message, project_dir)
+            append_job_log(project_id, job.id, "Generating AI edit patches")
+            update_job(project_id, job.id, progress=25)
+            result = _run_edit_draft(project_id, body.message, project_dir, job.id)
         else:
-            result = _run_generate_draft(project_id, body.message, project_dir)
+            result = _run_generate_draft(project_id, body.message, project_dir, job.id)
     except RuntimeError as exc:
+        append_job_log(project_id, job.id, str(exc), level="error")
+        update_job(project_id, job.id, status="failed", progress=100, error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    append_job_log(project_id, job.id, "Normalizing generated sources")
+    update_job(project_id, job.id, progress=80)
     normalized_files = _normalize_project_sources(project_dir)
     generated_files = {**result.get("generated_files", {}), **normalized_files}
     changed_files = _changed_files_payload(generated_files, project_dir)
@@ -195,6 +212,22 @@ def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
             warnings=warnings,
         )
     )
+    append_job_artifact(
+        project_id,
+        job.id,
+        artifact_type="changed_files",
+        name=f"{len(changed_files)} changed files",
+        metadata={"files": [file["path"] for file in changed_files]},
+    )
+    append_job_artifact(
+        project_id,
+        job.id,
+        artifact_type="draft",
+        name="Live preview draft",
+        metadata={"file_count": len(files), "warning_count": len(warnings)},
+    )
+    append_job_log(project_id, job.id, "Draft is ready for Live Preview")
+    update_job(project_id, job.id, status="succeeded", progress=100)
 
     return ChatResponse(
         message="Draft ready",
@@ -210,16 +243,54 @@ def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
 
 @router.post("/{project_id}/verify", response_model=ProjectDiagnosticsResponse)
 def post_project_verify(project_id: str) -> ProjectDiagnosticsResponse:
+    job = create_job(project_id, "verification", title="Backend verification")
+    append_job_log(project_id, job.id, "Starting backend verification")
+    update_job(project_id, job.id, status="running", progress=5)
     try:
+        append_job_log(project_id, job.id, "Marking diagnostics as verifying")
         save_project_diagnostics(ProjectDiagnosticsResponse(project_id=project_id, status="verifying"))
+        update_job(project_id, job.id, progress=10)
+        append_job_log(project_id, job.id, "Preparing project and dependencies")
         project_dir = scaffold_vite_project(project_id)
-        diagnostics = _verify_project_with_repair(project_id, project_dir)
+        update_job(project_id, job.id, progress=20)
+        diagnostics = _verify_project_with_repair(project_id, project_dir, job.id)
         save_project_diagnostics(diagnostics)
+        append_job_artifact(
+            project_id,
+            job.id,
+            artifact_type="diagnostics",
+            name=f"Verification {diagnostics.status}",
+            metadata={
+                "status": diagnostics.status,
+                "typescript_errors": len(diagnostics.typescript_errors),
+                "runtime_errors": len(diagnostics.runtime_errors),
+                "warnings": len(diagnostics.warnings),
+                "changed_files": _changed_file_paths(diagnostics.changed_files),
+            },
+        )
+        if diagnostics.preview_url:
+            append_job_artifact(
+                project_id,
+                job.id,
+                artifact_type="preview_url",
+                name="Verified preview",
+                url=diagnostics.preview_url,
+            )
+        if diagnostics.status == "passed":
+            append_job_log(project_id, job.id, "Verification passed")
+            update_job(project_id, job.id, status="succeeded", progress=100)
+        else:
+            append_job_log(project_id, job.id, "Verification failed", level="error")
+            update_job(project_id, job.id, status="failed", progress=100, error=diagnostics.build_log[:2000])
     except ValueError as exc:
+        append_job_log(project_id, job.id, str(exc), level="error")
+        update_job(project_id, job.id, status="failed", progress=100, error=str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         diagnostics = build_diagnostics_from_log(project_id, passed=False, build_log=str(exc))
         save_project_diagnostics(diagnostics)
+        append_job_log(project_id, job.id, str(exc), level="error")
+        update_job(project_id, job.id, status="failed", progress=100, error=str(exc))
 
     return diagnostics
 
@@ -238,6 +309,18 @@ def _changed_files_payload(generated_files: dict[str, str], project_dir) -> list
         {"path": path, "content": content}
         for path, content in sorted(changed.items())
     ]
+
+
+def _changed_file_paths(changed_files: list) -> list[str]:
+    paths: list[str] = []
+    for file in changed_files:
+        if isinstance(file, dict):
+            path = file.get("path")
+        else:
+            path = getattr(file, "path", None)
+        if path:
+            paths.append(str(path))
+    return paths
 
 
 def _normalize_project_sources(project_dir) -> dict[str, str]:
@@ -272,11 +355,15 @@ def _attach_source_changes(
         diagnostics.notes = [*diagnostics.notes, note]
 
 
-def _verify_project_with_repair(project_id: str, project_dir) -> ProjectDiagnosticsResponse:
+def _verify_project_with_repair(project_id: str, project_dir, job_id: str | None = None) -> ProjectDiagnosticsResponse:
     before_sources = collect_project_sources(project_dir)
     last_diagnostics = ProjectDiagnosticsResponse(project_id=project_id, status="failed")
 
     for attempt in range(VERIFY_REPAIR_ATTEMPTS + 1):
+        if job_id:
+            label = "Running production build" if attempt == 0 else f"Re-running production build after repair attempt {attempt}"
+            append_job_log(project_id, job_id, label)
+            update_job(project_id, job_id, progress=min(35 + attempt * 15, 80))
         passed, build_log = try_build_vite_project(project_dir, project_id)
         diagnostics = build_diagnostics_from_log(project_id, passed=passed, build_log=build_log)
         _attach_source_changes(
@@ -289,22 +376,36 @@ def _verify_project_with_repair(project_id: str, project_dir) -> ProjectDiagnost
         if passed:
             if attempt > 0:
                 diagnostics.notes = [*diagnostics.notes, "AI repair applied", "Re-ran verify"]
+            if job_id:
+                append_job_log(project_id, job_id, "Production build passed")
+                update_job(project_id, job_id, progress=90)
             return diagnostics
 
         last_diagnostics = diagnostics
+        if job_id:
+            append_job_log(project_id, job_id, "Production build failed", level="warning")
         if attempt >= VERIFY_REPAIR_ATTEMPTS:
             break
 
         try:
+            if job_id:
+                append_job_log(project_id, job_id, f"Running AI repair attempt {attempt + 1}")
+                update_job(project_id, job_id, progress=min(45 + attempt * 15, 85))
             repaired = _apply_verify_repair(project_id, project_dir, build_log, attempt + 1)
         except (RuntimeError, ValueError) as exc:
             logger.exception("Verify AI repair failed for project %s", project_id)
             last_diagnostics.notes = [*last_diagnostics.notes, f"AI repair failed: {exc}"]
+            if job_id:
+                append_job_log(project_id, job_id, f"AI repair failed: {exc}", level="error")
             break
         if not repaired:
+            if job_id:
+                append_job_log(project_id, job_id, "AI repair produced no changes", level="warning")
             break
 
     _attach_source_changes(last_diagnostics, before_sources, project_dir, note="Source changes applied")
+    if job_id:
+        append_job_log(project_id, job_id, "Verification ended with failures", level="error")
     return last_diagnostics
 
 
@@ -342,10 +443,19 @@ def _apply_verify_repair(project_id: str, project_dir, build_log: str, attempt: 
     return changed
 
 
-def _run_generate_draft(project_id: str, message: str, project_dir) -> AgentState:
+def _run_generate_draft(project_id: str, message: str, project_dir, job_id: str | None = None) -> AgentState:
     state = _initial_state(message, project_id, project_dir)
+    stages = [
+        ("Planning project files", plan_project, 20),
+        ("Generating project files", generate_files, 55),
+        ("Repairing missing imports", repair_missing_imports, 68),
+        ("Syncing files to workspace", sync_project, 75),
+    ]
 
-    for node in (plan_project, generate_files, repair_missing_imports, sync_project):
+    for label, node, progress in stages:
+        if job_id:
+            append_job_log(project_id, job_id, label)
+            update_job(project_id, job_id, progress=progress)
         state = {**state, **node(state)}
         _raise_if_draft_blocked(state)
 
@@ -355,14 +465,20 @@ def _run_generate_draft(project_id: str, message: str, project_dir) -> AgentStat
     }
 
 
-def _run_edit_draft(project_id: str, message: str, project_dir) -> AgentState:
+def _run_edit_draft(project_id: str, message: str, project_dir, job_id: str | None = None) -> AgentState:
     current_files = collect_project_sources(project_dir)
     edit = clean_edit_patches(request_project_edit(project_dir, message))
     generated = dict(current_files)
+    if job_id:
+        append_job_log(project_id, job_id, f"Applying {len(edit.patches)} draft patches")
+        update_job(project_id, job_id, progress=65)
     for patch in edit.patches:
         safe_path = normalize_posix_path(patch.path)
         write_project_file(project_id, safe_path, patch.content)
         generated[safe_path] = patch.content
+    if job_id:
+        append_job_log(project_id, job_id, "Edit draft files written to workspace")
+        update_job(project_id, job_id, progress=75)
 
     return {
         **_initial_state(message, project_id, project_dir),

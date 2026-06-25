@@ -13,6 +13,7 @@ import {
   createProjectFile,
   createProject,
   deleteProjectFile,
+  deployProject,
   getProjectDiagnostics,
   listProjectFiles,
   previewProjectEdit,
@@ -23,6 +24,8 @@ import {
   saveProjectFile,
   sendChatDraft,
   type ChatResponse,
+  type ChatMode,
+  type DeploymentRecord,
   type ProjectDiagnosticsResponse,
   type ProjectEditPreviewContext,
   type ProjectEditPreviewResponse,
@@ -67,6 +70,18 @@ type MonacoSelectionEvent = {
 
 type MonacoModel = {
   getValueInRange: (selection: MonacoSelection) => string;
+};
+
+type DeployProvider = "vercel" | "netlify" | "cloudflare";
+
+type DeployIntent = {
+  provider: DeployProvider;
+  projectName: string;
+};
+
+type PendingDeployIntent = {
+  intent: DeployIntent;
+  message: string;
 };
 
 type MonacoTypescriptDefaults = {
@@ -220,62 +235,170 @@ declare module "*.json" {
 }
 
 const WEBSITE_TYPE_OPTIONS: PromptOption[] = [
-  { label: "Brand Website", description: "Company, studio, personal brand, or consulting service" },
-  { label: "SaaS / Product Landing Page", description: "App, AI tool, digital product, or subscription service" },
-  { label: "E-commerce / Product Sales Website", description: "Fashion, beauty, food, electronics, or lifestyle goods" },
-  { label: "Restaurant / Cafe Website", description: "Restaurant brand, cafe, bar, or dessert shop" },
-  { label: "Portfolio / Resume Website", description: "Designer, engineer, photographer, or freelancer" },
-  { label: "Event / Course Registration Page", description: "Talk, workshop, online course, or product launch" },
-  { label: "Blog / Content Media Website", description: "Knowledge site, travel, food, or technical articles" },
+  { label: "Brand / Company Website", description: "Company, studio, personal brand, or consulting service" },
+  { label: "Personal Portfolio", description: "Designer, engineer, photographer, freelancer, or creator" },
+  { label: "Landing Page", description: "Single focused campaign, product, or service page" },
+  { label: "SaaS Product Website", description: "App, AI tool, digital product, or subscription service" },
+  { label: "Clinic / Booking Website", description: "Appointment-based service, clinic, coach, or local provider" },
+  { label: "Restaurant Website", description: "Restaurant brand, cafe, bar, dessert shop, or food business" },
+  { label: "E-commerce Store", description: "Fashion, beauty, food, electronics, or lifestyle goods" },
+  { label: "Blog / Content Website", description: "Knowledge site, travel, food, or technical articles" },
+  { label: "Event Website", description: "Talk, workshop, online course, launch, or conference" },
+  { label: "Custom", description: "Use your own website type" },
+];
+
+const WEBSITE_FORMAT_OPTIONS = [
+  "One-page website",
+  "Multi-page website",
+  "Not sure, let AI decide",
+];
+
+const MAIN_OBJECTIVE_OPTIONS = [
+  "Get leads",
+  "Sell a product",
+  "Showcase portfolio",
+  "Explain services",
+  "Build trust",
+  "Collect bookings",
+  "Share information",
+  "Custom",
+];
+
+const TONE_OF_VOICE_OPTIONS = [
+  "Professional",
+  "Friendly",
+  "Premium",
+  "Playful",
+  "Technical",
+  "Minimal",
+  "Bold",
+  "Custom",
+];
+
+const CTA_ACTION_OPTIONS = [
+  "Contact Us",
+  "Book a Call",
+  "Sign Up",
+  "Buy Now",
+  "Start Free Trial",
+  "Download App",
+  "View Portfolio",
+  "Subscribe",
+  "Get a Quote",
+  "Custom",
+];
+
+const CTA_DESTINATION_OPTIONS = [
+  "Contact form section",
+  "External link",
+  "Pricing section",
+  "Booking page",
+  "Email",
+  "Phone",
+  "Custom",
 ];
 
 const DESIGN_STYLE_OPTIONS = [
   "Modern Minimal",
+  "Bold Startup",
   "Luxury Editorial",
-  "Tech Forward",
-  "Warm Lifestyle",
-  "Youthful Playful",
-  "Professional Trustworthy",
-  "Dark Mode",
+  "Friendly & Playful",
+  "Tech / SaaS",
+  "Professional Corporate",
+  "Creative Portfolio",
+  "Custom",
 ];
 
 const COLOR_PALETTE_OPTIONS = [
-  "Black, White, and Gray Minimal",
-  "Dark Background with Purple Accent",
-  "White and Blue Tech",
-  "Beige and Brown Warm",
-  "Pink and Cream Soft",
-  "Natural Green",
+  "Black, White, and Gray",
+  "Blue and White",
+  "Warm Neutral",
+  "Dark Mode",
+  "Pastel",
+  "High Contrast",
+  "Brand Colors",
+  "Custom",
 ];
 
-const EDIT_QUICK_ACTIONS = [
-  "Fix current errors",
-  "Edit the current file",
-  "Improve visual design",
-  "Refactor this component",
+const TYPOGRAPHY_VIBE_OPTIONS = [
+  "Clean Sans-serif",
+  "Elegant Serif",
+  "Tech / Futuristic",
+  "Friendly Rounded",
+  "Let AI decide",
 ];
 
-const SECTION_OPTIONS = [
-  "Hero Section",
-  "Navigation Bar",
-  "Services / Feature Overview",
-  "Product / Portfolio Cards",
-  "Pricing Plans",
-  "Testimonials",
-  "FAQ",
-  "Contact Form",
-  "Map / Address Information",
-  "Footer",
+const LAYOUT_DENSITY_OPTIONS = [
+  "Spacious",
+  "Balanced",
+  "Compact",
+];
+
+const ANIMATION_LEVEL_OPTIONS = [
+  "None",
+  "Subtle",
+  "Moderate",
+  "Rich",
+];
+
+function detectDeployIntent(message: string): DeployIntent | null {
+  const text = message.toLowerCase();
+  const wantsDeploy = /\b(deploy|deployment|publish|release|go live|launch)\b/.test(text);
+  if (!wantsDeploy) {
+    return null;
+  }
+
+  const provider: DeployProvider = text.includes("cloudflare")
+    ? "cloudflare"
+    : text.includes("vercel")
+      ? "vercel"
+      : "netlify";
+  const nameMatch = message.match(/(?:as|named|name|site name|project name)\s+["']?([a-z0-9][a-z0-9-]{2,62})["']?/i);
+
+  return {
+    provider,
+    projectName: nameMatch?.[1] ?? "",
+  };
+}
+
+const SECTION_GROUPS = [
+  {
+    title: "Essential Sections",
+    items: ["Navigation Bar", "Hero Section", "Footer"],
+  },
+  {
+    title: "Business Sections",
+    items: ["About", "Services", "Products / Portfolio", "Pricing", "Team", "Process / Timeline"],
+  },
+  {
+    title: "Trust & Conversion",
+    items: ["Testimonials", "FAQ", "Case Studies", "Client Logos", "CTA Section"],
+  },
+  {
+    title: "Contact",
+    items: ["Contact Form", "Map / Address", "Social Links", "Newsletter Signup"],
+  },
 ];
 
 const DEFAULT_SECTIONS = [
-  "Hero Section",
   "Navigation Bar",
-  "Services / Feature Overview",
-  "Testimonials",
-  "Contact Form",
+  "Hero Section",
   "Footer",
+  "About",
+  "Services",
+  "Contact Form",
 ];
+
+const GUIDED_SECTION_IDS = [
+  "websiteGoal",
+  "brandAudience",
+  "primaryCta",
+  "designPreferences",
+  "pagesSections",
+  "additionalRequirements",
+];
+
+const DEFAULT_GUIDED_SECTION = "websiteGoal";
 
 function splitCustomItems(value: string): string[] {
   return value
@@ -485,59 +608,185 @@ function editAgentStatusClass(status: "idle" | "editing" | "review" | "applying"
   return "bg-amber-100 text-amber-800";
 }
 
-function buildWebsitePrompt({
+function selectedOrCustom(selected: string, custom: string) {
+  const trimmed = custom.trim();
+  return selected === "Custom" && trimmed ? trimmed : selected;
+}
+
+function appendPromptSection(lines: string[], title: string, entries: Array<[string, string | string[] | undefined]>) {
+  const content = entries
+    .map(([label, value]) => {
+      if (Array.isArray(value)) {
+        return value.length > 0 ? `${label}: ${value.join(", ")}` : "";
+      }
+      const trimmed = value?.trim();
+      return trimmed ? `${label}: ${trimmed}` : "";
+    })
+    .filter(Boolean);
+
+  if (content.length > 0) {
+    lines.push(`\n## ${title}`, ...content);
+  }
+}
+
+function buildStructuredWebsitePrompt({
   websiteType,
-  designStyle,
-  colorPalette,
+  customWebsiteType,
+  websiteFormat,
+  mainObjective,
+  customMainObjective,
+  brandName,
+  businessDescription,
+  targetAudience,
+  toneOfVoice,
+  customToneOfVoice,
+  ctaAction,
+  customCtaAction,
+  ctaButtonText,
+  ctaDestination,
+  customCtaDestination,
+  ctaLink,
   sections,
-  cta,
-  customDetails,
+  customSections,
+  designStyle,
+  customDesignStyle,
+  colorPalette,
+  customColorPalette,
+  typographyVibe,
+  layoutDensity,
+  animationLevel,
+  referenceWebsites,
+  requiredCopy,
+  specialInstructions,
+  structuredData,
 }: {
   websiteType: string;
-  designStyle: string;
-  colorPalette: string;
+  customWebsiteType: string;
+  websiteFormat: string;
+  mainObjective: string;
+  customMainObjective: string;
+  brandName: string;
+  businessDescription: string;
+  targetAudience: string;
+  toneOfVoice: string;
+  customToneOfVoice: string;
+  ctaAction: string;
+  customCtaAction: string;
+  ctaButtonText: string;
+  ctaDestination: string;
+  customCtaDestination: string;
+  ctaLink: string;
   sections: string[];
-  cta: string;
-  customDetails: string;
+  customSections: string[];
+  designStyle: string;
+  customDesignStyle: string;
+  colorPalette: string;
+  customColorPalette: string;
+  typographyVibe: string;
+  layoutDensity: string;
+  animationLevel: string;
+  referenceWebsites: string;
+  requiredCopy: string;
+  specialInstructions: string;
+  structuredData: string;
 }) {
-  const promptLines = [
-    `Create a ${websiteType}.`,
-    `Use the ${designStyle} design style with the ${colorPalette} color palette.`,
-    `The website must include: ${sections.join(", ")}.`,
+  const resolvedWebsiteType = websiteType === "Custom"
+    ? customWebsiteType.trim() || "Custom website"
+    : websiteType;
+  const resolvedMainObjective = selectedOrCustom(mainObjective, customMainObjective);
+  const resolvedTone = selectedOrCustom(toneOfVoice, customToneOfVoice);
+  const resolvedCtaAction = selectedOrCustom(ctaAction, customCtaAction);
+  const resolvedCtaDestination = selectedOrCustom(ctaDestination, customCtaDestination);
+  const resolvedDesignStyle = selectedOrCustom(designStyle, customDesignStyle);
+  const resolvedColorPalette = selectedOrCustom(colorPalette, customColorPalette);
+  const allSections = [...sections, ...customSections];
+  const lines = [
+    `Create a ${resolvedWebsiteType}.`,
+    "Use the structured requirements below to make planning, copywriting, visual design, and implementation decisions.",
   ];
 
-  if (cta) {
-    promptLines.push(`The primary CTA is: ${cta}.`);
-  }
+  appendPromptSection(lines, "Website Goal", [
+    ["Website Type", resolvedWebsiteType],
+    ["Website Format", websiteFormat],
+    ["Main Objective", resolvedMainObjective],
+  ]);
+  appendPromptSection(lines, "Brand & Audience", [
+    ["Brand / Company Name", brandName],
+    ["What they do", businessDescription],
+    ["Target Audience", targetAudience],
+    ["Tone of Voice", resolvedTone],
+  ]);
+  appendPromptSection(lines, "Primary CTA", [
+    ["Main Visitor Action", resolvedCtaAction],
+    ["CTA Button Text", ctaButtonText],
+    ["CTA Destination", resolvedCtaDestination],
+    ["CTA Link", ctaLink],
+  ]);
+  appendPromptSection(lines, "Pages & Sections", [
+    ["Selected Sections", allSections.length > 0 ? allSections : ["Navigation Bar", "Hero Section", "Footer"]],
+  ]);
+  appendPromptSection(lines, "Design Preferences", [
+    ["Design Style", resolvedDesignStyle],
+    ["Color Palette", resolvedColorPalette],
+    ["Custom Color Palette", customColorPalette],
+    ["Typography Vibe", typographyVibe],
+    ["Layout Density", layoutDensity],
+    ["Animation Level", animationLevel],
+    ["Reference Websites", referenceWebsites],
+  ]);
+  appendPromptSection(lines, "Additional Requirements", [
+    ["Required Copy / Content", requiredCopy],
+    ["Special Instructions", specialInstructions],
+    ["Data / Structured Information", structuredData],
+  ]);
 
-  if (customDetails) {
-    promptLines.push(`Additional custom requirements: ${customDetails}`);
-  }
-
-  promptLines.push(
+  lines.push(
+    "\n## Generation Instructions",
     "Use a multi-file React component architecture and split major sections into maintainable components.",
     "Keep design tokens, spacing, typography, radius, and interaction states consistent across sections.",
     "Support responsive design: desktop may use multi-column layouts, while mobile must be single-column without horizontal scrolling.",
     "If real images, videos, maps, pricing, business hours, or facts are missing, use clearly labeled placeholders such as \"To be provided\". Do not invent facts or reference missing local assets.",
   );
 
-  return promptLines.join("\n");
+  return lines.join("\n");
 }
 
 export default function BuilderPage() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [websiteType, setWebsiteType] = useState(WEBSITE_TYPE_OPTIONS[0].label);
   const [customWebsiteType, setCustomWebsiteType] = useState("");
+  const [websiteFormat, setWebsiteFormat] = useState(WEBSITE_FORMAT_OPTIONS[0]);
+  const [mainObjective, setMainObjective] = useState(MAIN_OBJECTIVE_OPTIONS[0]);
+  const [customMainObjective, setCustomMainObjective] = useState("");
+  const [brandName, setBrandName] = useState("");
+  const [businessDescription, setBusinessDescription] = useState("");
+  const [targetAudience, setTargetAudience] = useState("");
+  const [toneOfVoice, setToneOfVoice] = useState(TONE_OF_VOICE_OPTIONS[0]);
+  const [customToneOfVoice, setCustomToneOfVoice] = useState("");
+  const [ctaAction, setCtaAction] = useState(CTA_ACTION_OPTIONS[0]);
+  const [customCtaAction, setCustomCtaAction] = useState("");
+  const [ctaButtonText, setCtaButtonText] = useState("Contact Us");
+  const [ctaDestination, setCtaDestination] = useState(CTA_DESTINATION_OPTIONS[0]);
+  const [customCtaDestination, setCustomCtaDestination] = useState("");
+  const [ctaLink, setCtaLink] = useState("");
   const [designStyle, setDesignStyle] = useState(DESIGN_STYLE_OPTIONS[0]);
   const [customDesignStyle, setCustomDesignStyle] = useState("");
   const [colorPalette, setColorPalette] = useState(COLOR_PALETTE_OPTIONS[0]);
   const [customColorPalette, setCustomColorPalette] = useState("");
+  const [typographyVibe, setTypographyVibe] = useState(TYPOGRAPHY_VIBE_OPTIONS[0]);
+  const [layoutDensity, setLayoutDensity] = useState(LAYOUT_DENSITY_OPTIONS[1]);
+  const [animationLevel, setAnimationLevel] = useState(ANIMATION_LEVEL_OPTIONS[1]);
+  const [referenceWebsites, setReferenceWebsites] = useState("");
   const [sections, setSections] = useState(DEFAULT_SECTIONS);
   const [customSections, setCustomSections] = useState("");
-  const [cta, setCta] = useState("Contact Us");
-  const [customDetails, setCustomDetails] = useState("");
-  const [reviewingPrompt, setReviewingPrompt] = useState(false);
-  const [editMessage, setEditMessage] = useState("");
+  const [requiredCopy, setRequiredCopy] = useState("");
+  const [specialInstructions, setSpecialInstructions] = useState("");
+  const [structuredData, setStructuredData] = useState("");
+  const [openBuilderSections, setOpenBuilderSections] = useState<string[]>([DEFAULT_GUIDED_SECTION]);
+  const [includeGuidedFields, setIncludeGuidedFields] = useState(true);
+  const [aiMessage, setAiMessage] = useState("");
+  const [promptPreview, setPromptPreview] = useState("");
+  const [promptPreviewSource, setPromptPreviewSource] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingHint, setLoadingHint] = useState("Generating...");
   const [bootstrapping, setBootstrapping] = useState(true);
@@ -551,7 +800,11 @@ export default function BuilderPage() {
   const [fileSearch, setFileSearch] = useState("");
   const [selectedContextFiles, setSelectedContextFiles] = useState<string[]>([]);
   const [includeCurrentFile, setIncludeCurrentFile] = useState(true);
+  const [includeSelection, setIncludeSelection] = useState(true);
   const [includeDiagnostics, setIncludeDiagnostics] = useState(true);
+  const [includeChangedFiles, setIncludeChangedFiles] = useState(true);
+  const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [contextSearch, setContextSearch] = useState("");
   const [fileContent, setFileContent] = useState("");
   const [savedFileContent, setSavedFileContent] = useState("");
   const [selectedEditorText, setSelectedEditorText] = useState("");
@@ -570,6 +823,9 @@ export default function BuilderPage() {
   const [editApplyLoading, setEditApplyLoading] = useState(false);
   const [editPreviewError, setEditPreviewError] = useState<string | null>(null);
   const [editAgentStatus, setEditAgentStatus] = useState<"idle" | "editing" | "review" | "applying" | "verifying" | "needs_attention">("idle");
+  const [deployIntentLoading, setDeployIntentLoading] = useState(false);
+  const [lastPromptDeployment, setLastPromptDeployment] = useState<DeploymentRecord | null>(null);
+  const [pendingDeployIntent, setPendingDeployIntent] = useState<PendingDeployIntent | null>(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [activeToolTab, setActiveToolTab] = useState<"problems" | "logs" | "terminal" | "jobs">("jobs");
   const [exportDeployOpen, setExportDeployOpen] = useState(false);
@@ -577,12 +833,15 @@ export default function BuilderPage() {
   const saveCurrentFileRef = useRef<() => void>(() => {});
   const monacoEditorRef = useRef<MonacoEditorInstance | null>(null);
   const autoLiveProjectRef = useRef<string | null>(null);
+  const lastAiPromptRef = useRef("");
 
   const fileIsDirty = selectedFile !== null && fileContent !== savedFileContent;
   const activePreviewUrl = webPreviewUrl ?? previewUrl;
   const previewSource = webPreviewUrl ? "live" : previewUrl ? "verified" : "none";
   const verificationStatus = verifyLoading ? "verifying" : diagnostics?.status ?? "idle";
   const changedFiles = result?.changed_files ?? [];
+  const hasProjectDraft = Boolean(result) || ["live_unverified", "verifying", "passed", "failed"].includes(diagnostics?.status ?? "");
+  const allGuidedSectionsOpen = GUIDED_SECTION_IDS.every((sectionId) => openBuilderSections.includes(sectionId));
   const filteredProjectFiles = useMemo(() => {
     const query = fileSearch.trim().toLowerCase();
     if (!query) {
@@ -591,13 +850,29 @@ export default function BuilderPage() {
     return projectFiles.filter((file) => file.toLowerCase().includes(query));
   }, [fileSearch, projectFiles]);
   const selectedContextSet = useMemo(() => new Set(selectedContextFiles), [selectedContextFiles]);
+  const recentChangedFiles = useMemo(
+    () => [...new Set(changedFiles.map((file) => file.path).filter((path) => projectFiles.includes(path)))].slice(0, 8),
+    [changedFiles, projectFiles],
+  );
   const activeContextFiles = useMemo(() => {
     const files = new Set(selectedContextFiles.filter((file) => projectFiles.includes(file)));
     if (includeCurrentFile && selectedFile) {
       files.add(selectedFile);
     }
+    if (includeChangedFiles) {
+      for (const file of recentChangedFiles) {
+        files.add(file);
+      }
+    }
     return [...files].sort();
-  }, [includeCurrentFile, projectFiles, selectedContextFiles, selectedFile]);
+  }, [includeChangedFiles, includeCurrentFile, projectFiles, recentChangedFiles, selectedContextFiles, selectedFile]);
+  const filteredContextFiles = useMemo(() => {
+    const query = contextSearch.trim().toLowerCase();
+    if (!query) {
+      return projectFiles;
+    }
+    return projectFiles.filter((file) => file.toLowerCase().includes(query));
+  }, [contextSearch, projectFiles]);
   const fileTree = useMemo(() => buildFileTree(filteredProjectFiles), [filteredProjectFiles]);
   const problemCount = (
     (diagnostics?.typescript_errors.length ?? 0)
@@ -607,30 +882,115 @@ export default function BuilderPage() {
     + (diagnostics?.status === "failed" && !(diagnostics?.typescript_errors.length || diagnostics?.runtime_errors.length) ? 1 : 0)
   );
   const hasBuildLog = Boolean(diagnostics?.build_log || result?.build_log);
+  const buildLogTone = diagnostics?.status === "passed"
+    ? "success"
+    : diagnostics?.status === "failed"
+      ? "error"
+      : "neutral";
 
   const finalPrompt = useMemo(() => {
-    const selectedSections = [...sections, ...splitCustomItems(customSections)];
-
-    return buildWebsitePrompt({
-      websiteType: customWebsiteType.trim() || websiteType,
-      designStyle: customDesignStyle.trim() || designStyle,
-      colorPalette: customColorPalette.trim() || colorPalette,
-      sections: selectedSections.length > 0 ? selectedSections : ["Hero Section", "Footer"],
-      cta: cta.trim(),
-      customDetails: customDetails.trim(),
+    return buildStructuredWebsitePrompt({
+      websiteType,
+      customWebsiteType,
+      websiteFormat,
+      mainObjective,
+      customMainObjective,
+      brandName,
+      businessDescription,
+      targetAudience,
+      toneOfVoice,
+      customToneOfVoice,
+      ctaAction,
+      customCtaAction,
+      ctaButtonText,
+      ctaDestination,
+      customCtaDestination,
+      ctaLink,
+      sections,
+      customSections: splitCustomItems(customSections),
+      designStyle,
+      customDesignStyle,
+      colorPalette,
+      customColorPalette,
+      typographyVibe,
+      layoutDensity,
+      animationLevel,
+      referenceWebsites,
+      requiredCopy,
+      specialInstructions,
+      structuredData,
     });
   }, [
+    animationLevel,
+    brandName,
+    businessDescription,
     colorPalette,
-    cta,
+    ctaAction,
+    ctaButtonText,
+    ctaDestination,
+    ctaLink,
     customColorPalette,
-    customDetails,
+    customCtaAction,
+    customCtaDestination,
     customDesignStyle,
+    customMainObjective,
+    customSections,
+    customToneOfVoice,
+    customWebsiteType,
+    designStyle,
+    layoutDensity,
+    mainObjective,
+    referenceWebsites,
+    requiredCopy,
+    sections,
+    specialInstructions,
+    structuredData,
+    targetAudience,
+    toneOfVoice,
+    typographyVibe,
+    websiteFormat,
+    websiteType,
+  ]);
+
+  const guidedContextChips = useMemo(() => {
+    const customSectionCount = splitCustomItems(customSections).length;
+    const chips = [
+      `Website: ${selectedOrCustom(websiteType, customWebsiteType)}`,
+      `Goal: ${selectedOrCustom(mainObjective, customMainObjective)}`,
+      `CTA: ${ctaButtonText.trim() || selectedOrCustom(ctaAction, customCtaAction)}`,
+      `Design: ${selectedOrCustom(designStyle, customDesignStyle)}`,
+      `Sections: ${sections.length + customSectionCount}`,
+    ];
+
+    if (brandName.trim()) {
+      chips.splice(2, 0, `Brand: ${brandName.trim()}`);
+    }
+    if (requiredCopy.trim() || specialInstructions.trim() || structuredData.trim()) {
+      chips.push("Additional requirements");
+    }
+
+    return chips;
+  }, [
+    brandName,
+    ctaAction,
+    ctaButtonText,
+    customCtaAction,
+    customDesignStyle,
+    customMainObjective,
     customSections,
     customWebsiteType,
     designStyle,
-    sections,
+    mainObjective,
+    requiredCopy,
+    sections.length,
+    specialInstructions,
+    structuredData,
     websiteType,
   ]);
+  const currentPromptDraft = buildAiMessageWithGuidedBrief(aiMessage);
+  const canGeneratePrompt = Boolean(currentPromptDraft.trim());
+  const promptPreviewDirty = Boolean(promptPreviewSource) && promptPreviewSource !== currentPromptDraft;
+  const canRunPromptPreview = Boolean(promptPreview.trim()) && !promptPreviewDirty;
 
   useEffect(() => {
     let cancelled = false;
@@ -879,8 +1239,8 @@ export default function BuilderPage() {
         await createSnapshot(projectId, {
           label: "Verified build",
           kind: "verify",
-          prompt: finalPrompt,
-          notes: nextDiagnostics.notes.join("。"),
+          prompt: lastAiPromptRef.current || finalPrompt,
+          notes: nextDiagnostics.notes.join(". "),
         }).catch(() => undefined);
       } else if (nextDiagnostics.status === "failed") {
         setActiveToolTab("problems");
@@ -1065,7 +1425,6 @@ export default function BuilderPage() {
 
   function updateDraft(update: () => void) {
     update();
-    setReviewingPrompt(false);
   }
 
   function toggleSection(section: string) {
@@ -1078,38 +1437,76 @@ export default function BuilderPage() {
     });
   }
 
-  async function handleBuilderSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!projectId) {
+  function toggleBuilderSection(sectionId: string) {
+    setOpenBuilderSections((current) =>
+      current.includes(sectionId)
+        ? current.filter((item) => item !== sectionId)
+        : [...current, sectionId],
+    );
+  }
+
+  function toggleAllBuilderSections() {
+    setOpenBuilderSections((current) =>
+      GUIDED_SECTION_IDS.every((sectionId) => current.includes(sectionId))
+        ? []
+        : GUIDED_SECTION_IDS,
+    );
+  }
+
+  function buildAiMessageWithGuidedBrief(message: string) {
+    const trimmed = message.trim();
+    if (!includeGuidedFields) {
+      return trimmed;
+    }
+    return trimmed ? `${trimmed}\n\nGuided brief:\n${finalPrompt}` : finalPrompt;
+  }
+
+  function generatePromptPreview() {
+    const nextPrompt = buildAiMessageWithGuidedBrief(aiMessage);
+    if (!nextPrompt.trim()) {
+      return;
+    }
+    setPromptPreview(nextPrompt);
+    setPromptPreviewSource(nextPrompt);
+    setEditPreviewError(null);
+    setPendingDeployIntent(null);
+  }
+
+  async function requestProjectDraft(message: string, mode: ChatMode, snapshotLabel: string) {
+    if (!projectId || !message.trim()) {
       return;
     }
 
-    if (!reviewingPrompt) {
-      setReviewingPrompt(true);
-      return;
-    }
-
+    const prompt = message.trim();
+    lastAiPromptRef.current = prompt;
     setLoading(true);
-    setLoadingHint("Generating draft...");
+    setLoadingHint(mode === "generate" ? "Generating draft..." : "Applying draft...");
     setError(null);
+    setEditPreviewError(null);
+    setEditPreview(null);
+    setEditAgentStatus("editing");
 
     try {
-      const response = await sendChatDraft(projectId, finalPrompt, "generate");
+      const response = await sendChatDraft(projectId, prompt, mode);
       setResult(response);
-      setEditMessage("");
-      setReviewingPrompt(true);
+      setAiMessage("");
       await refreshProjectFiles();
       await syncChatResponseToWebContainer(response);
       await createSnapshot(projectId, {
-        label: "Generated draft",
-        kind: "generate",
-        prompt: finalPrompt,
+        label: snapshotLabel,
+        kind: mode === "generate" ? "generate" : "edit",
+        prompt,
         notes: response.reply,
       }).catch(() => undefined);
       await refreshDiagnostics();
-      void runBackendVerify();
+      setEditAgentStatus("verifying");
+      const verified = await runBackendVerify();
+      setEditAgentStatus(verified?.status === "failed" ? "needs_attention" : "idle");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Generation failed");
+      const message = err instanceof Error ? err.message : "AI draft failed";
+      setError(message);
+      setEditPreviewError(message);
+      setEditAgentStatus("needs_attention");
     } finally {
       setLoading(false);
       setLoadingHint("Generating...");
@@ -1122,13 +1519,6 @@ export default function BuilderPage() {
         ? current.filter((file) => file !== path)
         : [...current, path],
     );
-  }
-
-  function appendEditQuickAction(action: string) {
-    setEditMessage((current) => {
-      const prefix = current.trim();
-      return prefix ? `${prefix}\n${action}` : action;
-    });
   }
 
   function updateEditorSelection(selection: MonacoSelection | null) {
@@ -1148,8 +1538,8 @@ export default function BuilderPage() {
     return {
       context_files: activeContextFiles,
       current_file: includeCurrentFile ? selectedFile : null,
-      selected_text: selectedEditorText,
-      selected_range: selectedEditorRange,
+      selected_text: includeSelection ? selectedEditorText : "",
+      selected_range: includeSelection ? selectedEditorRange : "",
       diagnostics_summary: includeDiagnostics ? buildDiagnosticsSummary(diagnostics) : "",
     };
   }
@@ -1176,15 +1566,84 @@ export default function BuilderPage() {
     }
   }
 
+  async function requestPromptDeployment(intent: DeployIntent, message: string) {
+    if (!projectId) {
+      return;
+    }
+
+    setDeployIntentLoading(true);
+    setEditPreviewError(null);
+    setEditPreview(null);
+    setPendingDeployIntent(null);
+    setEditAgentStatus("applying");
+    setActiveToolTab("jobs");
+
+    try {
+      const deployment = await deployProject(projectId, {
+        provider: intent.provider,
+        project_name: intent.projectName,
+        site_name: intent.projectName,
+      });
+      lastAiPromptRef.current = message.trim();
+      setLastPromptDeployment(deployment);
+      setAiMessage("");
+      setExportDeployOpen(true);
+      setEditAgentStatus("idle");
+    } catch (err: unknown) {
+      setEditAgentStatus("needs_attention");
+      setEditPreviewError(err instanceof Error ? err.message : "Deployment failed");
+    } finally {
+      setDeployIntentLoading(false);
+    }
+  }
+
+  async function runPromptPreview() {
+    const prompt = promptPreview.trim();
+    if (!prompt || promptPreviewDirty) {
+      return;
+    }
+
+    const deployIntent = detectDeployIntent(prompt);
+    if (deployIntent) {
+      if (diagnostics?.status !== "passed") {
+        setPendingDeployIntent(null);
+        setEditPreviewError("Backend verification must pass before deploying. Run verification first, then ask AI to deploy again.");
+        setActiveToolTab("problems");
+        return;
+      }
+
+      setEditPreviewError(null);
+      setEditPreview(null);
+      setPendingDeployIntent({ intent: deployIntent, message: prompt });
+      setEditAgentStatus("review");
+      return;
+    }
+
+    if (hasProjectDraft) {
+      await requestEditPreview(prompt);
+      return;
+    }
+
+    await requestProjectDraft(prompt, "generate", "Generated conversational draft");
+  }
+
   async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await requestEditPreview(editMessage);
+    generatePromptPreview();
   }
 
   async function requestInlineEditPreview() {
-    const message = editMessage.trim()
+    const message = aiMessage.trim()
       || "Make the smallest necessary change to the selected code only, and keep the full file buildable.";
     await requestEditPreview(message);
+  }
+
+  async function requestDirectDraftFromComposer() {
+    const snapshotLabel = hasProjectDraft ? "AI draft applied" : "Generated conversational draft";
+    if (!canRunPromptPreview) {
+      return;
+    }
+    await requestProjectDraft(promptPreview, hasProjectDraft ? "auto" : "generate", snapshotLabel);
   }
 
   async function acceptEditPreview() {
@@ -1216,14 +1675,15 @@ export default function BuilderPage() {
       };
 
       setResult(changedResponse);
-      setEditMessage("");
+      lastAiPromptRef.current = aiMessage.trim();
+      setAiMessage("");
       setEditPreview(null);
       await refreshProjectFiles();
       await syncChatResponseToWebContainer(changedResponse);
       await createSnapshot(projectId, {
         label: "AI edit applied",
         kind: "edit",
-        prompt: editMessage,
+        prompt: aiMessage,
         notes: editPreview.notes,
       }).catch(() => undefined);
       setDiagnostics((current) =>
@@ -1272,23 +1732,15 @@ export default function BuilderPage() {
       return (
         <div
           key={node.path}
-          className={`flex items-center gap-1 rounded-lg pr-2 transition ${
+          className={`flex items-center rounded-lg pr-2 transition ${
             selectedFile === node.path ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-white"
           }`}
           style={{ paddingLeft: `${8 + depth * 12}px` }}
         >
-          <input
-            type="checkbox"
-            checked={selectedContextSet.has(node.path)}
-            onChange={() => toggleContextFile(node.path)}
-            className="h-3 w-3 rounded border-zinc-300"
-            aria-label={`Add ${node.path} to AI context`}
-            disabled={fileLoading || fileSaving}
-          />
           <button
             type="button"
             onClick={() => void openProjectFile(node.path)}
-            className="min-w-0 flex-1 truncate py-1.5 text-left font-mono text-xs"
+            className="min-w-0 flex-1 truncate py-1.5 pl-2 text-left font-mono text-xs"
             disabled={fileLoading || fileSaving}
           >
             {node.name}
@@ -1301,287 +1753,730 @@ export default function BuilderPage() {
   return (
     <div className="min-h-full bg-zinc-50 text-zinc-900">
       <div className="mx-auto flex min-h-full max-w-[1800px] flex-col gap-6 px-4 py-8 lg:flex-row">
-        <section className="flex w-full flex-col gap-4 overflow-auto lg:w-[520px] lg:min-w-[360px] lg:max-w-[760px] lg:shrink-0 lg:resize-x">
-          <div>
-            <p className="text-sm font-medium text-zinc-500">website-builder-agent</p>
+        <section className="flex w-full flex-col gap-4 lg:h-[calc(100vh-4rem)] lg:min-h-0 lg:w-[520px] lg:min-w-[360px] lg:max-w-[760px] lg:shrink-0 lg:resize-x lg:overflow-hidden">
+          <div className="order-0 shrink-0">
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">
               AI Website Builder
             </h1>
             <p className="mt-2 text-sm leading-6 text-zinc-600">
-              Choose the website type, style, color palette, and sections, then review the full prompt before sending it to the agent.
-            </p>
-            <p className="mt-1 hidden text-xs text-zinc-400 lg:block">
-              Drag the side panel, file tree, and editor edges to resize the workspace.
+              Start with a message, then refine details with Guided fields if needed.
             </p>
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm">
-            <p className="font-medium text-zinc-700">Project ID</p>
-            <p className="mt-1 break-all font-mono text-zinc-900">
-              {bootstrapping ? "Creating..." : projectId ?? "—"}
-            </p>
-          </div>
-
-          <form onSubmit={handleBuilderSubmit} className="flex flex-col gap-3">
-            <div>
-              <p className="text-sm font-medium text-zinc-700">Website Prompt</p>
-              <p className="mt-1 text-xs leading-5 text-zinc-500">
-                The full website requirements stay here. You can revise the options and regenerate, which replaces the current preview.
-              </p>
+          <div className="order-1 min-h-0 flex-1 overflow-auto rounded-xl border border-zinc-200 bg-white p-4 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-medium text-zinc-700">Guided fields</p>
+                <p className="mt-1 text-xs text-zinc-500">Used as context for AI.</p>
+              </div>
+              <button
+                type="button"
+                onClick={toggleAllBuilderSections}
+                className="shrink-0 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+              >
+                {allGuidedSectionsOpen ? "Collapse all" : "Expand all"}
+              </button>
             </div>
-                <div className="rounded-xl border border-zinc-200 bg-white p-4">
-                  <label htmlFor="websiteType" className="text-sm font-medium text-zinc-700">
-                    Website Type
-                  </label>
-                  <select
-                    id="websiteType"
-                    value={websiteType}
-                    onChange={(event) => updateDraft(() => setWebsiteType(event.target.value))}
-                    className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
-                    disabled={bootstrapping || loading || !projectId}
-                  >
-                    {WEBSITE_TYPE_OPTIONS.map((option) => (
-                      <option key={option.label} value={option.label}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-2 text-xs text-zinc-500">
-                    {WEBSITE_TYPE_OPTIONS.find((option) => option.label === websiteType)?.description}
-                  </p>
-                  <input
-                    value={customWebsiteType}
-                    onChange={(event) => updateDraft(() => setCustomWebsiteType(event.target.value))}
-                    className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
-                    placeholder="Or enter a custom website type, for example: clinic booking website"
-                    disabled={bootstrapping || loading || !projectId}
-                  />
-                </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-zinc-200 bg-white p-4">
-                    <label htmlFor="designStyle" className="text-sm font-medium text-zinc-700">
-                      Design Style
-                    </label>
-                    <select
-                      id="designStyle"
-                      value={designStyle}
-                      onChange={(event) => updateDraft(() => setDesignStyle(event.target.value))}
-                      className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
-                      disabled={bootstrapping || loading || !projectId}
-                    >
-                      {DESIGN_STYLE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      value={customDesignStyle}
-                      onChange={(event) => updateDraft(() => setCustomDesignStyle(event.target.value))}
-                      className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
-                      placeholder="Or enter a custom style"
-                      disabled={bootstrapping || loading || !projectId}
-                    />
-                  </div>
-
-                  <div className="rounded-xl border border-zinc-200 bg-white p-4">
-                    <label htmlFor="colorPalette" className="text-sm font-medium text-zinc-700">
-                      Color Palette
-                    </label>
-                    <select
-                      id="colorPalette"
-                      value={colorPalette}
-                      onChange={(event) => updateDraft(() => setColorPalette(event.target.value))}
-                      className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
-                      disabled={bootstrapping || loading || !projectId}
-                    >
-                      {COLOR_PALETTE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      value={customColorPalette}
-                      onChange={(event) => updateDraft(() => setCustomColorPalette(event.target.value))}
-                      className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
-                      placeholder="Or enter a custom color palette"
-                      disabled={bootstrapping || loading || !projectId}
-                    />
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-zinc-200 bg-white p-4">
-                  <p className="text-sm font-medium text-zinc-700">Main Sections</p>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {SECTION_OPTIONS.map((section) => (
-                      <label
-                        key={section}
-                        className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-700"
+            <div className="mt-4 flex flex-col gap-3">
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => toggleBuilderSection("websiteGoal")}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
+                >
+                  <span className="block text-sm font-medium text-zinc-800">Website Goal</span>
+                  <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("websiteGoal") ? "Hide" : "Open"}</span>
+                </button>
+                {openBuilderSections.includes("websiteGoal") ? (
+                  <div className="border-t border-zinc-100 p-4">
+                    <div className="grid gap-3">
+                      <label className="text-sm font-medium text-zinc-700" htmlFor="websiteType">Website Type</label>
+                      <select
+                        id="websiteType"
+                        value={websiteType}
+                        onChange={(event) => updateDraft(() => setWebsiteType(event.target.value))}
+                        className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                        disabled={bootstrapping || loading || !projectId}
                       >
+                        {WEBSITE_TYPE_OPTIONS.map((option) => (
+                          <option key={option.label} value={option.label}>{option.label}</option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-zinc-500">
+                        {WEBSITE_TYPE_OPTIONS.find((option) => option.label === websiteType)?.description}
+                      </p>
+                      <input
+                        value={customWebsiteType}
+                        onChange={(event) => updateDraft(() => setCustomWebsiteType(event.target.value))}
+                        className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                        placeholder="For example: clinic booking website, AI resume builder, real estate landing page"
+                        disabled={bootstrapping || loading || !projectId}
+                      />
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <label className="text-sm font-medium text-zinc-700" htmlFor="websiteFormat">Website Format</label>
+                          <select
+                            id="websiteFormat"
+                            value={websiteFormat}
+                            onChange={(event) => updateDraft(() => setWebsiteFormat(event.target.value))}
+                            className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                            disabled={bootstrapping || loading || !projectId}
+                          >
+                            {WEBSITE_FORMAT_OPTIONS.map((option) => (
+                              <option key={option} value={option}>{option}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-zinc-700" htmlFor="mainObjective">Main Objective</label>
+                          <select
+                            id="mainObjective"
+                            value={mainObjective}
+                            onChange={(event) => updateDraft(() => setMainObjective(event.target.value))}
+                            className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                            disabled={bootstrapping || loading || !projectId}
+                          >
+                            {MAIN_OBJECTIVE_OPTIONS.map((option) => (
+                              <option key={option} value={option}>{option}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      {mainObjective === "Custom" ? (
                         <input
-                          type="checkbox"
-                          checked={sections.includes(section)}
-                          onChange={() => toggleSection(section)}
+                          value={customMainObjective}
+                          onChange={(event) => updateDraft(() => setCustomMainObjective(event.target.value))}
+                          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                          placeholder="Describe the main goal for this website"
                           disabled={bootstrapping || loading || !projectId}
                         />
-                        {section}
-                      </label>
-                    ))}
-                  </div>
-                  <input
-                    value={customSections}
-                    onChange={(event) => updateDraft(() => setCustomSections(event.target.value))}
-                    className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
-                    placeholder="Other sections, separated by commas or new lines, for example: timeline, team"
-                    disabled={bootstrapping || loading || !projectId}
-                  />
-                </div>
-
-                <div className="rounded-xl border border-zinc-200 bg-white p-4">
-                  <label htmlFor="cta" className="text-sm font-medium text-zinc-700">
-                    CTA and Custom Content
-                  </label>
-                  <input
-                    id="cta"
-                    value={cta}
-                    onChange={(event) => updateDraft(() => setCta(event.target.value))}
-                    className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
-                    placeholder="For example: Book a Demo, Reserve Now, View Work"
-                    disabled={bootstrapping || loading || !projectId}
-                  />
-                  <textarea
-                    value={customDetails}
-                    onChange={(event) => updateDraft(() => setCustomDetails(event.target.value))}
-                    rows={4}
-                    className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
-                    placeholder="Add brand name, target audience, required copy, special features, or data."
-                    disabled={bootstrapping || loading || !projectId}
-                  />
-                </div>
-
-                {reviewingPrompt ? (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium text-emerald-900">
-                        {result ? "Current Full Prompt" : "Full Prompt to Send to AI"}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setReviewingPrompt(false)}
-                        className="text-sm text-emerald-800 underline underline-offset-4"
-                        disabled={loading}
-                      >
-                        Edit Prompt
-                      </button>
+                      ) : null}
                     </div>
-                    <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-3 text-xs leading-5 text-zinc-700">
-                      {finalPrompt}
-                    </pre>
-                    {result ? (
-                      <p className="mt-3 text-xs leading-5 text-emerald-900">
-                        If you change the options and confirm again, the current version will be replaced by a newly generated site.
-                      </p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => toggleBuilderSection("brandAudience")}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
+                >
+                  <span className="block text-sm font-medium text-zinc-800">Brand & Audience</span>
+                  <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("brandAudience") ? "Hide" : "Open"}</span>
+                </button>
+                {openBuilderSections.includes("brandAudience") ? (
+                  <div className="grid gap-3 border-t border-zinc-100 p-4">
+                    <input
+                      value={brandName}
+                      onChange={(event) => updateDraft(() => setBrandName(event.target.value))}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="Brand / Company Name, for example: Peter AI Studio"
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                    <textarea
+                      value={businessDescription}
+                      onChange={(event) => updateDraft(() => setBusinessDescription(event.target.value))}
+                      rows={3}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="What do you do? Briefly describe your business, product, service, or personal brand."
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                    <input
+                      value={targetAudience}
+                      onChange={(event) => updateDraft(() => setTargetAudience(event.target.value))}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="Target Audience, for example: startup founders, local business owners, patients, students"
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                    <div>
+                      <label className="text-sm font-medium text-zinc-700" htmlFor="toneOfVoice">Tone of Voice</label>
+                      <select
+                        id="toneOfVoice"
+                        value={toneOfVoice}
+                        onChange={(event) => updateDraft(() => setToneOfVoice(event.target.value))}
+                        className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                        disabled={bootstrapping || loading || !projectId}
+                      >
+                        {TONE_OF_VOICE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {toneOfVoice === "Custom" ? (
+                      <input
+                        value={customToneOfVoice}
+                        onChange={(event) => updateDraft(() => setCustomToneOfVoice(event.target.value))}
+                        className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                        placeholder="Describe the tone you want"
+                        disabled={bootstrapping || loading || !projectId}
+                      />
                     ) : null}
                   </div>
                 ) : null}
-            <button
-              type="submit"
-              disabled={bootstrapping || loading || !projectId}
-              className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
-            >
-              {loading
-                ? loadingHint
-                : reviewingPrompt
-                  ? result
-                    ? "Confirm and Regenerate Website"
-                    : "Confirm and Generate Website"
-                  : "Create Full Prompt"}
-            </button>
-          </form>
-
-          {result ? (
-            <form onSubmit={handleEditSubmit} className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-white p-4 shadow-sm">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <label htmlFor="editPrompt" className="text-sm font-medium text-violet-950">
-                    AI Edit Composer
-                  </label>
-                  <p className="mt-1 text-xs leading-5 text-zinc-500">
-                    Describe edits like Cursor, choose context, then generate a Diff Review before applying changes.
-                  </p>
-                </div>
-                <span className={`w-fit rounded-full px-2 py-0.5 text-xs font-medium ${editAgentStatusClass(editAgentStatus)}`}>
-                  {editAgentStatusLabel(editAgentStatus)}
-                </span>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                {EDIT_QUICK_ACTIONS.map((action) => (
-                  <button
-                    key={action}
-                    type="button"
-                    onClick={() => appendEditQuickAction(action)}
-                    className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-800 transition hover:bg-violet-100"
-                    disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || !projectId}
-                  >
-                    {action}
-                  </button>
-                ))}
-              </div>
-
-              <textarea
-                id="editPrompt"
-                rows={5}
-                value={editMessage}
-                onChange={(event) => setEditMessage(event.target.value)}
-                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-violet-400 focus:ring-2"
-                placeholder="For example: strengthen the Hero CTA and only modify the current file"
-                disabled={bootstrapping || loading || !projectId}
-              />
-
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
-                <div className="flex flex-wrap gap-3">
-                  <label className="flex items-center gap-2">
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => toggleBuilderSection("primaryCta")}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
+                >
+                  <span className="block text-sm font-medium text-zinc-800">Primary CTA</span>
+                  <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("primaryCta") ? "Hide" : "Open"}</span>
+                </button>
+                {openBuilderSections.includes("primaryCta") ? (
+                  <div className="grid gap-3 border-t border-zinc-100 p-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="text-sm font-medium text-zinc-700" htmlFor="ctaAction">Main Visitor Action</label>
+                        <select
+                          id="ctaAction"
+                          value={ctaAction}
+                          onChange={(event) => updateDraft(() => setCtaAction(event.target.value))}
+                          className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                          disabled={bootstrapping || loading || !projectId}
+                        >
+                          {CTA_ACTION_OPTIONS.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-zinc-700" htmlFor="ctaDestination">CTA Destination</label>
+                        <select
+                          id="ctaDestination"
+                          value={ctaDestination}
+                          onChange={(event) => updateDraft(() => setCtaDestination(event.target.value))}
+                          className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                          disabled={bootstrapping || loading || !projectId}
+                        >
+                          {CTA_DESTINATION_OPTIONS.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    {ctaAction === "Custom" ? (
+                      <input
+                        value={customCtaAction}
+                        onChange={(event) => updateDraft(() => setCustomCtaAction(event.target.value))}
+                        className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                        placeholder="Describe the visitor action you want"
+                        disabled={bootstrapping || loading || !projectId}
+                      />
+                    ) : null}
+                    {ctaDestination === "Custom" ? (
+                      <input
+                        value={customCtaDestination}
+                        onChange={(event) => updateDraft(() => setCustomCtaDestination(event.target.value))}
+                        className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                        placeholder="Describe where the CTA should go"
+                        disabled={bootstrapping || loading || !projectId}
+                      />
+                    ) : null}
                     <input
-                      type="checkbox"
-                      checked={includeCurrentFile}
-                      onChange={(event) => setIncludeCurrentFile(event.target.checked)}
+                      value={ctaButtonText}
+                      onChange={(event) => updateDraft(() => setCtaButtonText(event.target.value))}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="CTA Button Text, for example: Contact Us, Get Started, Book a Demo"
+                      disabled={bootstrapping || loading || !projectId}
                     />
-                    Include current file{selectedFile ? `: ${selectedFile}` : ""}
-                  </label>
-                  <label className="flex items-center gap-2">
                     <input
-                      type="checkbox"
-                      checked={includeDiagnostics}
-                      onChange={(event) => setIncludeDiagnostics(event.target.checked)}
+                      value={ctaLink}
+                      onChange={(event) => updateDraft(() => setCtaLink(event.target.value))}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="Optional: paste URL, email, phone number, or anchor link"
+                      disabled={bootstrapping || loading || !projectId}
                     />
-                    Include Build Diagnostics
-                  </label>
-                </div>
-
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {activeContextFiles.length > 0 ? (
-                    activeContextFiles.map((file) => (
-                      <span key={file} className="rounded-full bg-white px-2 py-0.5 font-mono text-[11px] text-zinc-700">
-                        {file}
-                      </span>
-                    ))
-                  ) : (
-                    <span>No context selected. The AI will use the current project content.</span>
-                  )}
-                </div>
-
-                {selectedEditorText ? (
-                  <p className="mt-2 font-mono text-[11px] text-violet-700">
-                    Selected {selectedFile} #{selectedEditorRange}. You can run an inline edit.
-                  </p>
+                  </div>
                 ) : null}
               </div>
 
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
                 <button
+                  type="button"
+                  onClick={() => toggleBuilderSection("designPreferences")}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
+                >
+                  <span className="block text-sm font-medium text-zinc-800">Design Preferences</span>
+                  <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("designPreferences") ? "Hide" : "Open"}</span>
+                </button>
+                {openBuilderSections.includes("designPreferences") ? (
+                  <div className="grid gap-3 border-t border-zinc-100 p-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="text-sm font-medium text-zinc-700" htmlFor="designStyle">Design Style</label>
+                        <select
+                          id="designStyle"
+                          value={designStyle}
+                          onChange={(event) => updateDraft(() => setDesignStyle(event.target.value))}
+                          className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                          disabled={bootstrapping || loading || !projectId}
+                        >
+                          {DESIGN_STYLE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-zinc-700" htmlFor="colorPalette">Color Palette</label>
+                        <select
+                          id="colorPalette"
+                          value={colorPalette}
+                          onChange={(event) => updateDraft(() => setColorPalette(event.target.value))}
+                          className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                          disabled={bootstrapping || loading || !projectId}
+                        >
+                          {COLOR_PALETTE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    {designStyle === "Custom" ? (
+                      <input
+                        value={customDesignStyle}
+                        onChange={(event) => updateDraft(() => setCustomDesignStyle(event.target.value))}
+                        className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                        placeholder="Describe a custom visual style"
+                        disabled={bootstrapping || loading || !projectId}
+                      />
+                    ) : null}
+                    <input
+                      value={customColorPalette}
+                      onChange={(event) => updateDraft(() => setCustomColorPalette(event.target.value))}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="Custom Color Palette, for example: navy blue, white, and gold"
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div>
+                        <label className="text-sm font-medium text-zinc-700" htmlFor="typographyVibe">Typography Vibe</label>
+                        <select
+                          id="typographyVibe"
+                          value={typographyVibe}
+                          onChange={(event) => updateDraft(() => setTypographyVibe(event.target.value))}
+                          className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                          disabled={bootstrapping || loading || !projectId}
+                        >
+                          {TYPOGRAPHY_VIBE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-zinc-700" htmlFor="layoutDensity">Layout Density</label>
+                        <select
+                          id="layoutDensity"
+                          value={layoutDensity}
+                          onChange={(event) => updateDraft(() => setLayoutDensity(event.target.value))}
+                          className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                          disabled={bootstrapping || loading || !projectId}
+                        >
+                          {LAYOUT_DENSITY_OPTIONS.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-zinc-700" htmlFor="animationLevel">Animation Level</label>
+                        <select
+                          id="animationLevel"
+                          value={animationLevel}
+                          onChange={(event) => updateDraft(() => setAnimationLevel(event.target.value))}
+                          className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                          disabled={bootstrapping || loading || !projectId}
+                        >
+                          {ANIMATION_LEVEL_OPTIONS.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <textarea
+                      value={referenceWebsites}
+                      onChange={(event) => updateDraft(() => setReferenceWebsites(event.target.value))}
+                      rows={3}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="Reference Websites: Optional, paste websites you like"
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => toggleBuilderSection("pagesSections")}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
+                >
+                  <span className="block text-sm font-medium text-zinc-800">Pages & Sections</span>
+                  <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("pagesSections") ? "Hide" : "Open"}</span>
+                </button>
+                {openBuilderSections.includes("pagesSections") ? (
+                  <div className="grid gap-4 border-t border-zinc-100 p-4">
+                    {SECTION_GROUPS.map((group) => (
+                      <div key={group.title}>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{group.title}</p>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {group.items.map((section) => (
+                            <label key={section} className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-700">
+                              <input
+                                type="checkbox"
+                                checked={sections.includes(section)}
+                                onChange={() => toggleSection(section)}
+                                disabled={bootstrapping || loading || !projectId}
+                              />
+                              {section}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    <input
+                      value={customSections}
+                      onChange={(event) => updateDraft(() => setCustomSections(event.target.value))}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="For example: timeline, team, comparison table, gallery"
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => toggleBuilderSection("additionalRequirements")}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
+                >
+                  <span className="block text-sm font-medium text-zinc-800">Additional Requirements</span>
+                  <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("additionalRequirements") ? "Hide" : "Open"}</span>
+                </button>
+                {openBuilderSections.includes("additionalRequirements") ? (
+                  <div className="grid gap-3 border-t border-zinc-100 p-4">
+                    <textarea
+                      value={requiredCopy}
+                      onChange={(event) => updateDraft(() => setRequiredCopy(event.target.value))}
+                      rows={4}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="Required Copy / Content: Paste exact text, product descriptions, pricing plans, FAQ, testimonials, or business details."
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                    <textarea
+                      value={specialInstructions}
+                      onChange={(event) => updateDraft(() => setSpecialInstructions(event.target.value))}
+                      rows={3}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="Special Instructions, for example: make the website sound premium but not too corporate."
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                    <textarea
+                      value={structuredData}
+                      onChange={(event) => updateDraft(() => setStructuredData(event.target.value))}
+                      rows={4}
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
+                      placeholder="Data / Structured Information, for example: pricing plans, service list, team members, locations, opening hours."
+                      disabled={bootstrapping || loading || !projectId}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          {projectId ? (
+            <form onSubmit={handleEditSubmit} className="order-2 flex shrink-0 flex-col gap-3 rounded-xl border border-violet-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <label htmlFor="aiPrompt" className="text-sm font-medium text-violet-950">
+                  Ask AI
+                </label>
+                <label className="flex shrink-0 items-center gap-2 text-xs font-medium text-zinc-600">
+                  <input
+                    type="checkbox"
+                    checked={includeGuidedFields}
+                    onChange={(event) => setIncludeGuidedFields(event.target.checked)}
+                    disabled={bootstrapping || loading || deployIntentLoading || !projectId}
+                  />
+                  Include guided fields
+                </label>
+              </div>
+
+              <div className={`rounded-xl border px-3 py-2 text-xs leading-5 ${
+                includeGuidedFields
+                  ? "border-violet-100 bg-violet-50/60 text-violet-900"
+                  : "border-zinc-200 bg-zinc-50 text-zinc-500"
+              }`}>
+                <p className="font-medium">
+                  {includeGuidedFields ? "Included context" : "Guided fields excluded"}
+                </p>
+                {includeGuidedFields ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {guidedContextChips.map((chip) => (
+                      <span key={chip} className="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[11px] text-violet-800">
+                        {chip}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1">Only the text you type below will be sent.</p>
+                )}
+              </div>
+
+              <textarea
+                id="aiPrompt"
+                rows={5}
+                value={aiMessage}
+                onChange={(event) => {
+                  setAiMessage(event.target.value);
+                  setPendingDeployIntent(null);
+                }}
+                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-violet-400 focus:ring-2"
+                placeholder={
+                  hasProjectDraft
+                    ? "For example: research stronger CTA copy, update the Hero, then prepare a Diff Review"
+                    : "For example: research modern bilingual joke sites, then build a searchable archive with categories"
+                }
+                disabled={bootstrapping || loading || deployIntentLoading || !projectId}
+              />
+
+              {promptPreview ? (
+                <div className={`rounded-xl border p-3 text-xs ${
+                  promptPreviewDirty
+                    ? "border-amber-200 bg-amber-50 text-amber-900"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-900"
+                }`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium">Final Prompt Preview</p>
+                      <p className="mt-1 leading-5">
+                        {promptPreviewDirty
+                          ? "Guided fields or Ask AI changed. Regenerate the prompt before generating."
+                          : "This is the exact prompt that will be sent."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPromptPreview("");
+                        setPromptPreviewSource("");
+                      }}
+                      className="shrink-0 rounded-lg border border-current px-2 py-1 text-[11px] font-medium"
+                      disabled={loading || editPreviewLoading || deployIntentLoading}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <textarea
+                    value={promptPreview}
+                    onChange={(event) => setPromptPreview(event.target.value)}
+                    rows={7}
+                    className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-[11px] leading-5 text-zinc-800 outline-none ring-violet-400 focus:ring-2"
+                    disabled={loading || editPreviewLoading || editApplyLoading || deployIntentLoading}
+                  />
+                </div>
+              ) : null}
+
+              {lastPromptDeployment ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5 text-emerald-800">
+                  <p className="font-medium">Deployment ready via {lastPromptDeployment.provider}.</p>
+                  {lastPromptDeployment.url ? (
+                    <a href={lastPromptDeployment.url} target="_blank" rel="noreferrer" className="mt-1 block underline underline-offset-4">
+                      {lastPromptDeployment.url}
+                    </a>
+                  ) : (
+                    <p className="mt-1">{lastPromptDeployment.message}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {pendingDeployIntent ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                  <p className="font-medium">
+                    Confirm deployment to {pendingDeployIntent.intent.provider}
+                    {pendingDeployIntent.intent.projectName ? ` as ${pendingDeployIntent.intent.projectName}` : ""}
+                  </p>
+                  <p className="mt-1">
+                    This will publish the current verified build and create a deployment job.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void requestPromptDeployment(pendingDeployIntent.intent, pendingDeployIntent.message)}
+                      disabled={deployIntentLoading}
+                      className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-amber-800 disabled:bg-amber-300"
+                    >
+                      Confirm Deployment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingDeployIntent(null);
+                        setEditAgentStatus("idle");
+                      }}
+                      disabled={deployIntentLoading}
+                      className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {hasProjectDraft ? (
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-zinc-700">Context</p>
+                    <p className="mt-1 leading-5 text-zinc-500">
+                      Context is selected automatically. Remove chips or add files only when needed.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setContextPanelOpen((current) => !current)}
+                    className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+                  >
+                    {contextPanelOpen ? "Hide context" : "Add context"}
+                  </button>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {includeCurrentFile && selectedFile ? (
+                    <button
+                      type="button"
+                      onClick={() => setIncludeCurrentFile(false)}
+                      className="rounded-full border border-zinc-200 bg-white px-2 py-1 font-mono text-[11px] text-zinc-700 hover:bg-zinc-100"
+                      title="Remove current file context"
+                    >
+                      Current file: {selectedFile} x
+                    </button>
+                  ) : null}
+                  {includeSelection && selectedEditorText ? (
+                    <button
+                      type="button"
+                      onClick={() => setIncludeSelection(false)}
+                      className="rounded-full border border-violet-200 bg-white px-2 py-1 font-mono text-[11px] text-violet-700 hover:bg-violet-50"
+                      title="Remove selected text context"
+                    >
+                      Selection: {selectedEditorText.split(/\r?\n/).length} lines x
+                    </button>
+                  ) : null}
+                  {includeDiagnostics && diagnostics ? (
+                    <button
+                      type="button"
+                      onClick={() => setIncludeDiagnostics(false)}
+                      className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[11px] text-amber-800 hover:bg-amber-50"
+                      title="Remove diagnostics context"
+                    >
+                      Diagnostics x
+                    </button>
+                  ) : null}
+                  {includeChangedFiles && recentChangedFiles.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setIncludeChangedFiles(false)}
+                      className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[11px] text-emerald-800 hover:bg-emerald-50"
+                      title="Remove recently changed files context"
+                    >
+                      Recently changed: {recentChangedFiles.length} files x
+                    </button>
+                  ) : null}
+                  {selectedContextFiles.filter((file) => projectFiles.includes(file)).map((file) => (
+                    <button
+                      key={file}
+                      type="button"
+                      onClick={() => toggleContextFile(file)}
+                      className="rounded-full border border-zinc-200 bg-white px-2 py-1 font-mono text-[11px] text-zinc-700 hover:bg-zinc-100"
+                      title="Remove file context"
+                    >
+                      File: {file} x
+                    </button>
+                  ))}
+                  {activeContextFiles.length === 0 && !(includeSelection && selectedEditorText) && !(includeDiagnostics && diagnostics) ? (
+                    <span className="rounded-full bg-white px-2 py-1 text-[11px] text-zinc-500">
+                      Automatic project context
+                    </span>
+                  ) : null}
+                </div>
+
+                {contextPanelOpen ? (
+                  <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={includeCurrentFile}
+                          onChange={(event) => setIncludeCurrentFile(event.target.checked)}
+                        />
+                        Current file
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={includeSelection}
+                          onChange={(event) => setIncludeSelection(event.target.checked)}
+                          disabled={!selectedEditorText}
+                        />
+                        Selected text
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={includeDiagnostics}
+                          onChange={(event) => setIncludeDiagnostics(event.target.checked)}
+                        />
+                        Diagnostics
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={includeChangedFiles}
+                          onChange={(event) => setIncludeChangedFiles(event.target.checked)}
+                          disabled={recentChangedFiles.length === 0}
+                        />
+                        Recently changed files
+                      </label>
+                    </div>
+
+                    <div className="mt-3">
+                      <input
+                        value={contextSearch}
+                        onChange={(event) => setContextSearch(event.target.value)}
+                        className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-xs outline-none ring-violet-400 focus:ring-2"
+                        placeholder="Search files to add context..."
+                      />
+                      <div className="mt-2 max-h-40 overflow-auto rounded-lg border border-zinc-200">
+                        {filteredContextFiles.slice(0, 80).map((file) => (
+                          <label key={file} className="flex items-center gap-2 border-b border-zinc-100 px-3 py-2 font-mono text-[11px] last:border-b-0">
+                            <input
+                              type="checkbox"
+                              checked={selectedContextSet.has(file)}
+                              onChange={() => toggleContextFile(file)}
+                            />
+                            {file}
+                          </label>
+                        ))}
+                        {filteredContextFiles.length === 0 ? (
+                          <p className="px-3 py-2 text-[11px] text-zinc-500">No files found.</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              ) : (
+                <p className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-500">
+                  No project files yet. Describe the site or app you want, and AI will create the first draft directly from this conversation.
+                </p>
+              )}
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {hasProjectDraft ? (
+                  <button
                   type="button"
                   onClick={() => void requestInlineEditPreview()}
                   disabled={
@@ -1589,6 +2484,7 @@ export default function BuilderPage() {
                     || loading
                     || editPreviewLoading
                     || editApplyLoading
+                    || deployIntentLoading
                     || !projectId
                     || !selectedEditorText
                   }
@@ -1596,12 +2492,44 @@ export default function BuilderPage() {
                 >
                   Edit Selection with AI
                 </button>
+                ) : null}
+                {hasProjectDraft ? (
+                  <button
+                    type="button"
+                    onClick={() => void requestDirectDraftFromComposer()}
+                    disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || deployIntentLoading || !projectId || !canRunPromptPreview}
+                    className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300"
+                  >
+                    {loading ? loadingHint : "Apply as Draft"}
+                  </button>
+                ) : null}
                 <button
-                  type="submit"
-                  disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || !projectId || !editMessage.trim()}
+                  type="button"
+                  onClick={promptPreview && !promptPreviewDirty ? () => void runPromptPreview() : generatePromptPreview}
+                  disabled={
+                    bootstrapping
+                    || loading
+                    || editPreviewLoading
+                    || editApplyLoading
+                    || deployIntentLoading
+                    || !projectId
+                    || (promptPreview && !promptPreviewDirty ? !canRunPromptPreview : !canGeneratePrompt)
+                  }
                   className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400 sm:flex-1"
                 >
-                  {editPreviewLoading ? "Generating diff..." : "Generate Diff Review"}
+                  {deployIntentLoading
+                    ? "Deploying..."
+                    : loading
+                      ? loadingHint
+                      : editPreviewLoading
+                        ? "Generating diff..."
+                        : promptPreview && !promptPreviewDirty
+                          ? hasProjectDraft
+                            ? "Generate Diff Review"
+                            : "Generate Website"
+                          : promptPreviewDirty
+                            ? "Regenerate Prompt"
+                            : "Generate Prompt"}
                 </button>
               </div>
             </form>
@@ -1680,52 +2608,12 @@ export default function BuilderPage() {
             </div>
           ) : null}
 
-          {loading ? (
-            <p className="text-sm text-zinc-500">
-              Keep the backend terminal running and watch the uvicorn logs for npm install and build progress.
-            </p>
-          ) : null}
-
           {error ? (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
             </div>
           ) : null}
 
-          {result ? (
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm">
-              <p className="font-medium text-zinc-700">{result.message}</p>
-              <p className="mt-2 text-zinc-600">{result.reply}</p>
-              {result.files.length > 0 ? (
-                <ul className="mt-3 list-inside list-disc text-zinc-600">
-                  {result.files.map((file) => (
-                    <li key={file}>{file}</li>
-                  ))}
-                </ul>
-              ) : null}
-              {result.fix_attempts > 0 ? (
-                <p className="mt-3 text-zinc-500">
-                  Auto-repaired {result.fix_attempts} times
-                  {result.build_attempts > 0
-                    ? `, succeeded after ${result.build_attempts} build attempts`
-                    : ""}
-                </p>
-              ) : null}
-              {result.warnings.length > 0 ? (
-                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
-                  <p className="font-medium">Information / Asset Warnings</p>
-                  <ul className="mt-2 list-inside list-disc">
-                    {result.warnings.map((warning, index) => (
-                      <li key={`${warning.kind}-${warning.path ?? warning.url ?? index}`}>
-                        {warning.message}
-                        {warning.fallback ? `（${warning.fallback}）` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
         </section>
 
         <section className="flex min-h-[70vh] min-w-0 flex-1 flex-col gap-4">
@@ -1985,7 +2873,11 @@ export default function BuilderPage() {
                   >
                     {tab.label}
                     {tab.badge > 0 ? (
-                      <span className="ml-2 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700">
+                      <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${
+                        tab.id === "problems"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-zinc-100 text-zinc-600"
+                      }`}>
                         {tab.badge}
                       </span>
                     ) : null}
@@ -2085,9 +2977,28 @@ export default function BuilderPage() {
 
               {activeToolTab === "logs" ? (
                 hasBuildLog ? (
-                  <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-zinc-950 p-3 text-xs leading-5 text-zinc-100">
-                    {diagnostics?.build_log || result?.build_log}
-                  </pre>
+                  <div className={`rounded-lg border ${
+                    buildLogTone === "success"
+                      ? "border-emerald-200 bg-emerald-50"
+                      : buildLogTone === "error"
+                        ? "border-red-200 bg-red-50"
+                        : "border-zinc-200 bg-zinc-50"
+                  }`}>
+                    <div className="border-b border-current/10 px-3 py-2">
+                      <p className={`text-xs font-medium ${
+                        buildLogTone === "success"
+                          ? "text-emerald-800"
+                          : buildLogTone === "error"
+                            ? "text-red-800"
+                            : "text-zinc-700"
+                      }`}>
+                        {buildLogTone === "success" ? "Build succeeded" : buildLogTone === "error" ? "Build failed" : "Build log"}
+                      </p>
+                    </div>
+                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all p-3 text-xs leading-5 text-zinc-800">
+                      {diagnostics?.build_log || result?.build_log}
+                    </pre>
+                  </div>
                 ) : (
                   <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
                     No build log yet.
