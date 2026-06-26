@@ -856,8 +856,6 @@ export default function BuilderPage() {
   const [bootstrapping, setBootstrapping] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ChatResponse | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewKey, setPreviewKey] = useState(0);
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
@@ -887,8 +885,8 @@ export default function BuilderPage() {
   const [editApplyLoading, setEditApplyLoading] = useState(false);
   const [editPreviewError, setEditPreviewError] = useState<string | null>(null);
   const [editAgentStatus, setEditAgentStatus] = useState<"idle" | "editing" | "review" | "applying" | "verifying" | "needs_attention">("idle");
-  const [staticPreviewLoading, setStaticPreviewLoading] = useState(false);
-  const [staticPreviewError, setStaticPreviewError] = useState<string | null>(null);
+  const [builtPreviewLoading, setBuiltPreviewLoading] = useState(false);
+  const [builtPreviewError, setBuiltPreviewError] = useState<string | null>(null);
   const [deployIntentLoading, setDeployIntentLoading] = useState(false);
   const [lastPromptDeployment, setLastPromptDeployment] = useState<DeploymentRecord | null>(null);
   const [pendingDeployIntent, setPendingDeployIntent] = useState<PendingDeployIntent | null>(null);
@@ -902,12 +900,12 @@ export default function BuilderPage() {
   const lastAiPromptRef = useRef("");
 
   const fileIsDirty = selectedFile !== null && fileContent !== savedFileContent;
-  const activePreviewUrl = webPreviewUrl ?? previewUrl;
-  const previewSource = webPreviewUrl ? "live" : previewUrl ? "verified" : "none";
+  const activePreviewUrl = webPreviewUrl;
+  const previewSource = webPreviewUrl ? "live" : "none";
   const verificationStatus = verifyLoading ? "verifying" : diagnostics?.status ?? "idle";
   const changedFiles = result?.changed_files ?? [];
   const hasProjectDraft = Boolean(result) || ["live_unverified", "verifying", "passed", "failed"].includes(diagnostics?.status ?? "");
-  const canOpenStaticPreview = Boolean(projectId && (hasProjectDraft || projectFiles.length > 0 || activePreviewUrl));
+  const canOpenBuiltPreview = Boolean(projectId && (hasProjectDraft || projectFiles.length > 0));
   const allGuidedSectionsOpen = GUIDED_SECTION_IDS.every((sectionId) => openBuilderSections.includes(sectionId));
   const filteredProjectFiles = useMemo(() => {
     const query = fileSearch.trim().toLowerCase();
@@ -1309,7 +1307,7 @@ export default function BuilderPage() {
           project_id: projectId,
           workspace_path: "",
           files: nextDiagnostics.changed_files.map((file) => file.path),
-          preview_url: previewUrl,
+          preview_url: null,
           build_attempts: result?.build_attempts ?? 0,
           fix_attempts: result?.fix_attempts ?? 0,
           build_log: nextDiagnostics.build_log,
@@ -1319,11 +1317,6 @@ export default function BuilderPage() {
         setResult(changedResponse);
         await refreshProjectFiles();
         await syncChatResponseToWebContainer(changedResponse);
-      }
-      if (nextDiagnostics.preview_url) {
-        const version = previewKey + 1;
-        setPreviewKey(version);
-        setPreviewUrl(resolvePreviewUrl(nextDiagnostics.preview_url, version));
       }
       if (nextDiagnostics.status === "passed") {
         await createSnapshot(projectId, {
@@ -1346,13 +1339,13 @@ export default function BuilderPage() {
     }
   }
 
-  async function openStaticPreviewInNewTab() {
-    if (!projectId || staticPreviewLoading) {
+  async function openBuiltPreviewInNewTab() {
+    if (!projectId || builtPreviewLoading) {
       return;
     }
 
-    setStaticPreviewError(null);
-    setStaticPreviewLoading(true);
+    setBuiltPreviewError(null);
+    setBuiltPreviewLoading(true);
     const previewTab = window.open("about:blank", "_blank");
     if (previewTab) {
       previewTab.document.write("<p style=\"font-family: system-ui, sans-serif; padding: 24px;\">Building preview...</p>");
@@ -1362,32 +1355,30 @@ export default function BuilderPage() {
       const nextDiagnostics = await runProjectBuild(projectId);
       setDiagnostics(nextDiagnostics);
 
-      if (nextDiagnostics.preview_url) {
-        const version = Date.now();
-        const nextPreviewUrl = resolvePreviewUrl(nextDiagnostics.preview_url, version);
-        setPreviewKey(version);
-        setPreviewUrl(nextPreviewUrl);
-        if (nextPreviewUrl) {
-          if (previewTab) {
-            previewTab.location.href = nextPreviewUrl;
-          } else {
-            window.open(nextPreviewUrl, "_blank", "noopener,noreferrer");
-          }
-        }
-        return;
+      if (!nextDiagnostics.preview_url) {
+        throw new Error(nextDiagnostics.build_log || "Build finished but no preview URL was returned.");
       }
 
-      throw new Error(nextDiagnostics.build_log || "Build finished but no static preview URL was returned.");
+      const nextPreviewUrl = resolvePreviewUrl(nextDiagnostics.preview_url, Date.now());
+      if (!nextPreviewUrl) {
+        throw new Error("Unable to resolve built preview URL.");
+      }
+
+      if (previewTab) {
+        previewTab.location.href = nextPreviewUrl;
+      } else {
+        window.open(nextPreviewUrl, "_blank", "noopener,noreferrer");
+      }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Unable to build static preview";
-      setStaticPreviewError(message);
+      const message = err instanceof Error ? err.message : "Unable to build preview";
+      setBuiltPreviewError(message);
       setDiagnosticsError(message);
       setActiveToolTab("problems");
       if (previewTab) {
         previewTab.close();
       }
     } finally {
-      setStaticPreviewLoading(false);
+      setBuiltPreviewLoading(false);
     }
   }
 
@@ -1541,6 +1532,7 @@ export default function BuilderPage() {
       await writeFilesToWebContainer(response.changed_files, {
         onLog: (line) => setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
         onServerReady: (url) => setWebPreviewUrl(url),
+        resetTemplateStyles: true,
       });
 
       const selectedUpdate = selectedFile
@@ -1812,7 +1804,7 @@ export default function BuilderPage() {
         project_id: projectId,
         workspace_path: "",
         files: response.changed_files.map((file) => file.path),
-        preview_url: previewUrl,
+        preview_url: null,
         build_attempts: result?.build_attempts ?? 0,
         fix_attempts: result?.fix_attempts ?? 0,
         build_log: result?.build_log ?? "",
@@ -3190,33 +3182,33 @@ export default function BuilderPage() {
                   <h2 className="text-sm font-medium text-zinc-700">Preview</h2>
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      activePreviewUrl ? verificationStatusClass(verificationStatus) : "bg-zinc-100 text-zinc-500"
+                      activePreviewUrl && hasProjectDraft ? verificationStatusClass(verificationStatus) : "bg-zinc-100 text-zinc-500"
                     }`}
                   >
-                    {webPreviewUrl ? "Live" : webBooting ? "Starting Live" : activePreviewUrl ? verificationStatusLabel(verificationStatus) : "No preview"}
+                    {webPreviewUrl ? (hasProjectDraft ? "Live" : "Website not generated yet") : webBooting ? "Starting Live" : "No preview"}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Live Preview syncs file changes in-app. Open in New Tab builds a backend static preview that can run independently.
+                  Live Preview runs in WebContainer. Open in New Tab builds a full-page preview from the current project files.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {canOpenStaticPreview ? (
+                {canOpenBuiltPreview ? (
                   <button
                     type="button"
-                    onClick={() => void openStaticPreviewInNewTab()}
-                    disabled={staticPreviewLoading || loading || !projectId}
+                    onClick={() => void openBuiltPreviewInNewTab()}
+                    disabled={builtPreviewLoading || loading || !projectId}
                     className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300"
                   >
-                    {staticPreviewLoading ? "Building Preview..." : "Open in New Tab"}
+                    {builtPreviewLoading ? "Building Preview..." : "Open in New Tab"}
                   </button>
                 ) : null}
               </div>
             </div>
 
-            {staticPreviewError ? (
+            {builtPreviewError ? (
               <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                Static preview failed: {staticPreviewError}
+                Built preview failed: {builtPreviewError}
               </div>
             ) : null}
 
@@ -3239,15 +3231,23 @@ export default function BuilderPage() {
                 Generating a new version. The preview will update automatically when ready...
               </div>
             ) : activePreviewUrl ? (
-              <iframe
-                key={`${previewSource}-${previewKey}-${activePreviewUrl}`}
-                title="Website preview"
-                src={activePreviewUrl}
-                className="h-full min-h-[70vh] w-full"
-              />
+              <div className="min-h-0 flex-1 overflow-auto bg-zinc-100">
+                {!hasProjectDraft ? (
+                  <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-600">
+                    Website not generated yet. The preview environment is ready and will update after you generate a website.
+                  </div>
+                ) : null}
+                <iframe
+                  key={`${previewSource}-${activePreviewUrl}`}
+                  title="Website preview"
+                  src={activePreviewUrl}
+                  scrolling="yes"
+                  className="block h-[calc(100vh-12rem)] min-h-[70vh] w-full min-w-[1200px] border-0 bg-white"
+                />
+              </div>
             ) : (
               <div className="flex h-full min-h-[70vh] w-full items-center justify-center px-6 text-center text-sm text-zinc-500">
-                {webBooting ? "Preparing Live Preview..." : "Live Preview starts automatically. The generated website will appear here."}
+                {webBooting ? "Preparing Live Preview..." : "Website not generated yet. Start with Ask AI to create a website preview."}
               </div>
             )}
           </div>
@@ -3294,7 +3294,7 @@ export default function BuilderPage() {
                     project_id: projectId ?? "",
                     workspace_path: "",
                     files: files.map((file) => file.path),
-                    preview_url: previewUrl,
+                    preview_url: null,
                     build_attempts: result?.build_attempts ?? 0,
                     fix_attempts: result?.fix_attempts ?? 0,
                     build_log: result?.build_log ?? "",
