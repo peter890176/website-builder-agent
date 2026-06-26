@@ -20,6 +20,7 @@ import {
   readProjectFile,
   renameProjectFile,
   resolvePreviewUrl,
+  runProjectBuild,
   runProjectVerify,
   saveProjectFile,
   sendChatDraft,
@@ -380,15 +381,6 @@ const SECTION_GROUPS = [
   },
 ];
 
-const DEFAULT_SECTIONS = [
-  "Navigation Bar",
-  "Hero Section",
-  "Footer",
-  "About",
-  "Services",
-  "Contact Form",
-];
-
 const GUIDED_SECTION_IDS = [
   "websiteGoal",
   "brandAudience",
@@ -399,6 +391,38 @@ const GUIDED_SECTION_IDS = [
 ];
 
 const DEFAULT_GUIDED_SECTION = "websiteGoal";
+const GUIDED_SELECT_PLACEHOLDER = "Select an option";
+
+type GuidedFieldKey =
+  | "websiteType"
+  | "customWebsiteType"
+  | "websiteFormat"
+  | "mainObjective"
+  | "customMainObjective"
+  | "brandName"
+  | "businessDescription"
+  | "targetAudience"
+  | "toneOfVoice"
+  | "customToneOfVoice"
+  | "ctaAction"
+  | "customCtaAction"
+  | "ctaButtonText"
+  | "ctaDestination"
+  | "customCtaDestination"
+  | "ctaLink"
+  | "sections"
+  | "customSections"
+  | "designStyle"
+  | "customDesignStyle"
+  | "colorPalette"
+  | "customColorPalette"
+  | "typographyVibe"
+  | "layoutDensity"
+  | "animationLevel"
+  | "referenceWebsites"
+  | "requiredCopy"
+  | "specialInstructions"
+  | "structuredData";
 
 function splitCustomItems(value: string): string[] {
   return value
@@ -613,6 +637,35 @@ function selectedOrCustom(selected: string, custom: string) {
   return selected === "Custom" && trimmed ? trimmed : selected;
 }
 
+function includeGuidedField(
+  touchedFields: ReadonlySet<GuidedFieldKey>,
+  key: GuidedFieldKey,
+  value: string | string[] | undefined,
+): string | string[] | undefined {
+  if (!touchedFields.has(key)) {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value : undefined;
+  }
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function includeGuidedSelectOrCustom(
+  touchedFields: ReadonlySet<GuidedFieldKey>,
+  selectKey: GuidedFieldKey,
+  customKey: GuidedFieldKey,
+  selected: string,
+  custom: string,
+): string | undefined {
+  if (!touchedFields.has(selectKey) && !touchedFields.has(customKey)) {
+    return undefined;
+  }
+  const resolved = selectedOrCustom(selected, custom).trim();
+  return resolved || undefined;
+}
+
 function appendPromptSection(lines: string[], title: string, entries: Array<[string, string | string[] | undefined]>) {
   const content = entries
     .map(([label, value]) => {
@@ -659,6 +712,7 @@ function buildStructuredWebsitePrompt({
   requiredCopy,
   specialInstructions,
   structuredData,
+  touchedFields,
 }: {
   websiteType: string;
   customWebsiteType: string;
@@ -689,56 +743,65 @@ function buildStructuredWebsitePrompt({
   requiredCopy: string;
   specialInstructions: string;
   structuredData: string;
+  touchedFields: ReadonlySet<GuidedFieldKey>;
 }) {
-  const resolvedWebsiteType = websiteType === "Custom"
-    ? customWebsiteType.trim() || "Custom website"
-    : websiteType;
-  const resolvedMainObjective = selectedOrCustom(mainObjective, customMainObjective);
-  const resolvedTone = selectedOrCustom(toneOfVoice, customToneOfVoice);
-  const resolvedCtaAction = selectedOrCustom(ctaAction, customCtaAction);
-  const resolvedCtaDestination = selectedOrCustom(ctaDestination, customCtaDestination);
-  const resolvedDesignStyle = selectedOrCustom(designStyle, customDesignStyle);
-  const resolvedColorPalette = selectedOrCustom(colorPalette, customColorPalette);
-  const allSections = [...sections, ...customSections];
-  const lines = [
-    `Create a ${resolvedWebsiteType}.`,
-    "Use the structured requirements below to make planning, copywriting, visual design, and implementation decisions.",
-  ];
+  const resolvedWebsiteType = includeGuidedSelectOrCustom(
+    touchedFields,
+    "websiteType",
+    "customWebsiteType",
+    websiteType,
+    customWebsiteType,
+  );
+  const selectedSections = touchedFields.has("sections") ? sections : [];
+  const selectedCustomSections = touchedFields.has("customSections") ? customSections : [];
+  const allSections = [...selectedSections, ...selectedCustomSections];
+  const lines: string[] = [];
+
+  if (resolvedWebsiteType) {
+    lines.push(
+      `Create a ${resolvedWebsiteType}.`,
+      "Use the structured requirements below to make planning, copywriting, visual design, and implementation decisions.",
+    );
+  }
 
   appendPromptSection(lines, "Website Goal", [
     ["Website Type", resolvedWebsiteType],
-    ["Website Format", websiteFormat],
-    ["Main Objective", resolvedMainObjective],
+    ["Website Format", includeGuidedField(touchedFields, "websiteFormat", websiteFormat)],
+    ["Main Objective", includeGuidedSelectOrCustom(touchedFields, "mainObjective", "customMainObjective", mainObjective, customMainObjective)],
   ]);
   appendPromptSection(lines, "Brand & Audience", [
-    ["Brand / Company Name", brandName],
-    ["What they do", businessDescription],
-    ["Target Audience", targetAudience],
-    ["Tone of Voice", resolvedTone],
+    ["Brand / Company Name", includeGuidedField(touchedFields, "brandName", brandName)],
+    ["What they do", includeGuidedField(touchedFields, "businessDescription", businessDescription)],
+    ["Target Audience", includeGuidedField(touchedFields, "targetAudience", targetAudience)],
+    ["Tone of Voice", includeGuidedSelectOrCustom(touchedFields, "toneOfVoice", "customToneOfVoice", toneOfVoice, customToneOfVoice)],
   ]);
   appendPromptSection(lines, "Primary CTA", [
-    ["Main Visitor Action", resolvedCtaAction],
-    ["CTA Button Text", ctaButtonText],
-    ["CTA Destination", resolvedCtaDestination],
-    ["CTA Link", ctaLink],
+    ["Main Visitor Action", includeGuidedSelectOrCustom(touchedFields, "ctaAction", "customCtaAction", ctaAction, customCtaAction)],
+    ["CTA Button Text", includeGuidedField(touchedFields, "ctaButtonText", ctaButtonText)],
+    ["CTA Destination", includeGuidedSelectOrCustom(touchedFields, "ctaDestination", "customCtaDestination", ctaDestination, customCtaDestination)],
+    ["CTA Link", includeGuidedField(touchedFields, "ctaLink", ctaLink)],
   ]);
   appendPromptSection(lines, "Pages & Sections", [
-    ["Selected Sections", allSections.length > 0 ? allSections : ["Navigation Bar", "Hero Section", "Footer"]],
+    ["Selected Sections", allSections.length > 0 ? allSections : undefined],
   ]);
   appendPromptSection(lines, "Design Preferences", [
-    ["Design Style", resolvedDesignStyle],
-    ["Color Palette", resolvedColorPalette],
-    ["Custom Color Palette", customColorPalette],
-    ["Typography Vibe", typographyVibe],
-    ["Layout Density", layoutDensity],
-    ["Animation Level", animationLevel],
-    ["Reference Websites", referenceWebsites],
+    ["Design Style", includeGuidedSelectOrCustom(touchedFields, "designStyle", "customDesignStyle", designStyle, customDesignStyle)],
+    ["Color Palette", includeGuidedSelectOrCustom(touchedFields, "colorPalette", "customColorPalette", colorPalette, customColorPalette)],
+    ["Custom Color Palette", colorPalette !== "Custom" ? includeGuidedField(touchedFields, "customColorPalette", customColorPalette) : undefined],
+    ["Typography Vibe", includeGuidedField(touchedFields, "typographyVibe", typographyVibe)],
+    ["Layout Density", includeGuidedField(touchedFields, "layoutDensity", layoutDensity)],
+    ["Animation Level", includeGuidedField(touchedFields, "animationLevel", animationLevel)],
+    ["Reference Websites", includeGuidedField(touchedFields, "referenceWebsites", referenceWebsites)],
   ]);
   appendPromptSection(lines, "Additional Requirements", [
-    ["Required Copy / Content", requiredCopy],
-    ["Special Instructions", specialInstructions],
-    ["Data / Structured Information", structuredData],
+    ["Required Copy / Content", includeGuidedField(touchedFields, "requiredCopy", requiredCopy)],
+    ["Special Instructions", includeGuidedField(touchedFields, "specialInstructions", specialInstructions)],
+    ["Data / Structured Information", includeGuidedField(touchedFields, "structuredData", structuredData)],
   ]);
+
+  if (lines.length === 0) {
+    return "";
+  }
 
   lines.push(
     "\n## Generation Instructions",
@@ -753,35 +816,36 @@ function buildStructuredWebsitePrompt({
 
 export default function BuilderPage() {
   const [projectId, setProjectId] = useState<string | null>(null);
-  const [websiteType, setWebsiteType] = useState(WEBSITE_TYPE_OPTIONS[0].label);
+  const [websiteType, setWebsiteType] = useState("");
   const [customWebsiteType, setCustomWebsiteType] = useState("");
-  const [websiteFormat, setWebsiteFormat] = useState(WEBSITE_FORMAT_OPTIONS[0]);
-  const [mainObjective, setMainObjective] = useState(MAIN_OBJECTIVE_OPTIONS[0]);
+  const [websiteFormat, setWebsiteFormat] = useState("");
+  const [mainObjective, setMainObjective] = useState("");
   const [customMainObjective, setCustomMainObjective] = useState("");
   const [brandName, setBrandName] = useState("");
   const [businessDescription, setBusinessDescription] = useState("");
   const [targetAudience, setTargetAudience] = useState("");
-  const [toneOfVoice, setToneOfVoice] = useState(TONE_OF_VOICE_OPTIONS[0]);
+  const [toneOfVoice, setToneOfVoice] = useState("");
   const [customToneOfVoice, setCustomToneOfVoice] = useState("");
-  const [ctaAction, setCtaAction] = useState(CTA_ACTION_OPTIONS[0]);
+  const [ctaAction, setCtaAction] = useState("");
   const [customCtaAction, setCustomCtaAction] = useState("");
-  const [ctaButtonText, setCtaButtonText] = useState("Contact Us");
-  const [ctaDestination, setCtaDestination] = useState(CTA_DESTINATION_OPTIONS[0]);
+  const [ctaButtonText, setCtaButtonText] = useState("");
+  const [ctaDestination, setCtaDestination] = useState("");
   const [customCtaDestination, setCustomCtaDestination] = useState("");
   const [ctaLink, setCtaLink] = useState("");
-  const [designStyle, setDesignStyle] = useState(DESIGN_STYLE_OPTIONS[0]);
+  const [designStyle, setDesignStyle] = useState("");
   const [customDesignStyle, setCustomDesignStyle] = useState("");
-  const [colorPalette, setColorPalette] = useState(COLOR_PALETTE_OPTIONS[0]);
+  const [colorPalette, setColorPalette] = useState("");
   const [customColorPalette, setCustomColorPalette] = useState("");
-  const [typographyVibe, setTypographyVibe] = useState(TYPOGRAPHY_VIBE_OPTIONS[0]);
-  const [layoutDensity, setLayoutDensity] = useState(LAYOUT_DENSITY_OPTIONS[1]);
-  const [animationLevel, setAnimationLevel] = useState(ANIMATION_LEVEL_OPTIONS[1]);
+  const [typographyVibe, setTypographyVibe] = useState("");
+  const [layoutDensity, setLayoutDensity] = useState("");
+  const [animationLevel, setAnimationLevel] = useState("");
   const [referenceWebsites, setReferenceWebsites] = useState("");
-  const [sections, setSections] = useState(DEFAULT_SECTIONS);
+  const [sections, setSections] = useState<string[]>([]);
   const [customSections, setCustomSections] = useState("");
   const [requiredCopy, setRequiredCopy] = useState("");
   const [specialInstructions, setSpecialInstructions] = useState("");
   const [structuredData, setStructuredData] = useState("");
+  const [touchedGuidedFields, setTouchedGuidedFields] = useState<Set<GuidedFieldKey>>(() => new Set());
   const [openBuilderSections, setOpenBuilderSections] = useState<string[]>([DEFAULT_GUIDED_SECTION]);
   const [includeGuidedFields, setIncludeGuidedFields] = useState(true);
   const [aiMessage, setAiMessage] = useState("");
@@ -823,6 +887,8 @@ export default function BuilderPage() {
   const [editApplyLoading, setEditApplyLoading] = useState(false);
   const [editPreviewError, setEditPreviewError] = useState<string | null>(null);
   const [editAgentStatus, setEditAgentStatus] = useState<"idle" | "editing" | "review" | "applying" | "verifying" | "needs_attention">("idle");
+  const [staticPreviewLoading, setStaticPreviewLoading] = useState(false);
+  const [staticPreviewError, setStaticPreviewError] = useState<string | null>(null);
   const [deployIntentLoading, setDeployIntentLoading] = useState(false);
   const [lastPromptDeployment, setLastPromptDeployment] = useState<DeploymentRecord | null>(null);
   const [pendingDeployIntent, setPendingDeployIntent] = useState<PendingDeployIntent | null>(null);
@@ -841,6 +907,7 @@ export default function BuilderPage() {
   const verificationStatus = verifyLoading ? "verifying" : diagnostics?.status ?? "idle";
   const changedFiles = result?.changed_files ?? [];
   const hasProjectDraft = Boolean(result) || ["live_unverified", "verifying", "passed", "failed"].includes(diagnostics?.status ?? "");
+  const canOpenStaticPreview = Boolean(projectId && (hasProjectDraft || projectFiles.length > 0 || activePreviewUrl));
   const allGuidedSectionsOpen = GUIDED_SECTION_IDS.every((sectionId) => openBuilderSections.includes(sectionId));
   const filteredProjectFiles = useMemo(() => {
     const query = fileSearch.trim().toLowerCase();
@@ -919,6 +986,7 @@ export default function BuilderPage() {
       requiredCopy,
       specialInstructions,
       structuredData,
+      touchedFields: touchedGuidedFields,
     });
   }, [
     animationLevel,
@@ -947,25 +1015,46 @@ export default function BuilderPage() {
     structuredData,
     targetAudience,
     toneOfVoice,
+    touchedGuidedFields,
     typographyVibe,
     websiteFormat,
     websiteType,
   ]);
 
   const guidedContextChips = useMemo(() => {
-    const customSectionCount = splitCustomItems(customSections).length;
-    const chips = [
-      `Website: ${selectedOrCustom(websiteType, customWebsiteType)}`,
-      `Goal: ${selectedOrCustom(mainObjective, customMainObjective)}`,
-      `CTA: ${ctaButtonText.trim() || selectedOrCustom(ctaAction, customCtaAction)}`,
-      `Design: ${selectedOrCustom(designStyle, customDesignStyle)}`,
-      `Sections: ${sections.length + customSectionCount}`,
-    ];
+    const chips: string[] = [];
+    const websiteLabel = includeGuidedSelectOrCustom(touchedGuidedFields, "websiteType", "customWebsiteType", websiteType, customWebsiteType);
+    const goalLabel = includeGuidedSelectOrCustom(touchedGuidedFields, "mainObjective", "customMainObjective", mainObjective, customMainObjective);
+    const ctaLabel = includeGuidedField(touchedGuidedFields, "ctaButtonText", ctaButtonText)
+      ?? includeGuidedSelectOrCustom(touchedGuidedFields, "ctaAction", "customCtaAction", ctaAction, customCtaAction);
+    const designLabel = includeGuidedSelectOrCustom(touchedGuidedFields, "designStyle", "customDesignStyle", designStyle, customDesignStyle);
+    const selectedSections = touchedGuidedFields.has("sections") ? sections : [];
+    const customSectionCount = touchedGuidedFields.has("customSections") ? splitCustomItems(customSections).length : 0;
+    const sectionCount = selectedSections.length + customSectionCount;
 
-    if (brandName.trim()) {
-      chips.splice(2, 0, `Brand: ${brandName.trim()}`);
+    if (websiteLabel) {
+      chips.push(`Website: ${websiteLabel}`);
     }
-    if (requiredCopy.trim() || specialInstructions.trim() || structuredData.trim()) {
+    if (goalLabel) {
+      chips.push(`Goal: ${goalLabel}`);
+    }
+    if (includeGuidedField(touchedGuidedFields, "brandName", brandName)) {
+      chips.push(`Brand: ${brandName.trim()}`);
+    }
+    if (ctaLabel) {
+      chips.push(`CTA: ${ctaLabel}`);
+    }
+    if (designLabel) {
+      chips.push(`Design: ${designLabel}`);
+    }
+    if (sectionCount > 0) {
+      chips.push(`Sections: ${sectionCount}`);
+    }
+    if (
+      includeGuidedField(touchedGuidedFields, "requiredCopy", requiredCopy)
+      || includeGuidedField(touchedGuidedFields, "specialInstructions", specialInstructions)
+      || includeGuidedField(touchedGuidedFields, "structuredData", structuredData)
+    ) {
       chips.push("Additional requirements");
     }
 
@@ -982,9 +1071,10 @@ export default function BuilderPage() {
     designStyle,
     mainObjective,
     requiredCopy,
-    sections.length,
+    sections,
     specialInstructions,
     structuredData,
+    touchedGuidedFields,
     websiteType,
   ]);
   const currentPromptDraft = buildAiMessageWithGuidedBrief(aiMessage);
@@ -1256,6 +1346,51 @@ export default function BuilderPage() {
     }
   }
 
+  async function openStaticPreviewInNewTab() {
+    if (!projectId || staticPreviewLoading) {
+      return;
+    }
+
+    setStaticPreviewError(null);
+    setStaticPreviewLoading(true);
+    const previewTab = window.open("about:blank", "_blank");
+    if (previewTab) {
+      previewTab.document.write("<p style=\"font-family: system-ui, sans-serif; padding: 24px;\">Building preview...</p>");
+    }
+
+    try {
+      const nextDiagnostics = await runProjectBuild(projectId);
+      setDiagnostics(nextDiagnostics);
+
+      if (nextDiagnostics.preview_url) {
+        const version = Date.now();
+        const nextPreviewUrl = resolvePreviewUrl(nextDiagnostics.preview_url, version);
+        setPreviewKey(version);
+        setPreviewUrl(nextPreviewUrl);
+        if (nextPreviewUrl) {
+          if (previewTab) {
+            previewTab.location.href = nextPreviewUrl;
+          } else {
+            window.open(nextPreviewUrl, "_blank", "noopener,noreferrer");
+          }
+        }
+        return;
+      }
+
+      throw new Error(nextDiagnostics.build_log || "Build finished but no static preview URL was returned.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to build static preview";
+      setStaticPreviewError(message);
+      setDiagnosticsError(message);
+      setActiveToolTab("problems");
+      if (previewTab) {
+        previewTab.close();
+      }
+    } finally {
+      setStaticPreviewLoading(false);
+    }
+  }
+
   useEffect(() => {
     function handleSaveShortcut(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
@@ -1423,8 +1558,19 @@ export default function BuilderPage() {
     }
   }
 
-  function updateDraft(update: () => void) {
+  function updateDraft(update: () => void, field?: GuidedFieldKey) {
     update();
+    if (!field) {
+      return;
+    }
+    setTouchedGuidedFields((current) => {
+      if (current.has(field)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(field);
+      return next;
+    });
   }
 
   function toggleSection(section: string) {
@@ -1434,7 +1580,7 @@ export default function BuilderPage() {
           ? current.filter((item) => item !== section)
           : [...current, section],
       );
-    });
+    }, "sections");
   }
 
   function toggleBuilderSection(sectionId: string) {
@@ -1795,20 +1941,23 @@ export default function BuilderPage() {
                       <select
                         id="websiteType"
                         value={websiteType}
-                        onChange={(event) => updateDraft(() => setWebsiteType(event.target.value))}
+                        onChange={(event) => updateDraft(() => setWebsiteType(event.target.value), "websiteType")}
                         className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         disabled={bootstrapping || loading || !projectId}
                       >
+                        <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                         {WEBSITE_TYPE_OPTIONS.map((option) => (
                           <option key={option.label} value={option.label}>{option.label}</option>
                         ))}
                       </select>
-                      <p className="text-xs text-zinc-500">
-                        {WEBSITE_TYPE_OPTIONS.find((option) => option.label === websiteType)?.description}
-                      </p>
+                      {websiteType ? (
+                        <p className="text-xs text-zinc-500">
+                          {WEBSITE_TYPE_OPTIONS.find((option) => option.label === websiteType)?.description}
+                        </p>
+                      ) : null}
                       <input
                         value={customWebsiteType}
-                        onChange={(event) => updateDraft(() => setCustomWebsiteType(event.target.value))}
+                        onChange={(event) => updateDraft(() => setCustomWebsiteType(event.target.value), "customWebsiteType")}
                         className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         placeholder="For example: clinic booking website, AI resume builder, real estate landing page"
                         disabled={bootstrapping || loading || !projectId}
@@ -1819,10 +1968,11 @@ export default function BuilderPage() {
                           <select
                             id="websiteFormat"
                             value={websiteFormat}
-                            onChange={(event) => updateDraft(() => setWebsiteFormat(event.target.value))}
+                            onChange={(event) => updateDraft(() => setWebsiteFormat(event.target.value), "websiteFormat")}
                             className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                             disabled={bootstrapping || loading || !projectId}
                           >
+                            <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                             {WEBSITE_FORMAT_OPTIONS.map((option) => (
                               <option key={option} value={option}>{option}</option>
                             ))}
@@ -1833,10 +1983,11 @@ export default function BuilderPage() {
                           <select
                             id="mainObjective"
                             value={mainObjective}
-                            onChange={(event) => updateDraft(() => setMainObjective(event.target.value))}
+                            onChange={(event) => updateDraft(() => setMainObjective(event.target.value), "mainObjective")}
                             className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                             disabled={bootstrapping || loading || !projectId}
                           >
+                            <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                             {MAIN_OBJECTIVE_OPTIONS.map((option) => (
                               <option key={option} value={option}>{option}</option>
                             ))}
@@ -1846,7 +1997,7 @@ export default function BuilderPage() {
                       {mainObjective === "Custom" ? (
                         <input
                           value={customMainObjective}
-                          onChange={(event) => updateDraft(() => setCustomMainObjective(event.target.value))}
+                          onChange={(event) => updateDraft(() => setCustomMainObjective(event.target.value), "customMainObjective")}
                           className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           placeholder="Describe the main goal for this website"
                           disabled={bootstrapping || loading || !projectId}
@@ -1870,14 +2021,14 @@ export default function BuilderPage() {
                   <div className="grid gap-3 border-t border-zinc-100 p-4">
                     <input
                       value={brandName}
-                      onChange={(event) => updateDraft(() => setBrandName(event.target.value))}
+                      onChange={(event) => updateDraft(() => setBrandName(event.target.value), "brandName")}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                       placeholder="Brand / Company Name, for example: Peter AI Studio"
                       disabled={bootstrapping || loading || !projectId}
                     />
                     <textarea
                       value={businessDescription}
-                      onChange={(event) => updateDraft(() => setBusinessDescription(event.target.value))}
+                      onChange={(event) => updateDraft(() => setBusinessDescription(event.target.value), "businessDescription")}
                       rows={3}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
                       placeholder="What do you do? Briefly describe your business, product, service, or personal brand."
@@ -1885,7 +2036,7 @@ export default function BuilderPage() {
                     />
                     <input
                       value={targetAudience}
-                      onChange={(event) => updateDraft(() => setTargetAudience(event.target.value))}
+                      onChange={(event) => updateDraft(() => setTargetAudience(event.target.value), "targetAudience")}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                       placeholder="Target Audience, for example: startup founders, local business owners, patients, students"
                       disabled={bootstrapping || loading || !projectId}
@@ -1895,10 +2046,11 @@ export default function BuilderPage() {
                       <select
                         id="toneOfVoice"
                         value={toneOfVoice}
-                        onChange={(event) => updateDraft(() => setToneOfVoice(event.target.value))}
+                        onChange={(event) => updateDraft(() => setToneOfVoice(event.target.value), "toneOfVoice")}
                         className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         disabled={bootstrapping || loading || !projectId}
                       >
+                        <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                         {TONE_OF_VOICE_OPTIONS.map((option) => (
                           <option key={option} value={option}>{option}</option>
                         ))}
@@ -1907,7 +2059,7 @@ export default function BuilderPage() {
                     {toneOfVoice === "Custom" ? (
                       <input
                         value={customToneOfVoice}
-                        onChange={(event) => updateDraft(() => setCustomToneOfVoice(event.target.value))}
+                        onChange={(event) => updateDraft(() => setCustomToneOfVoice(event.target.value), "customToneOfVoice")}
                         className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         placeholder="Describe the tone you want"
                         disabled={bootstrapping || loading || !projectId}
@@ -1934,10 +2086,11 @@ export default function BuilderPage() {
                         <select
                           id="ctaAction"
                           value={ctaAction}
-                          onChange={(event) => updateDraft(() => setCtaAction(event.target.value))}
+                          onChange={(event) => updateDraft(() => setCtaAction(event.target.value), "ctaAction")}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
                         >
+                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                           {CTA_ACTION_OPTIONS.map((option) => (
                             <option key={option} value={option}>{option}</option>
                           ))}
@@ -1948,10 +2101,11 @@ export default function BuilderPage() {
                         <select
                           id="ctaDestination"
                           value={ctaDestination}
-                          onChange={(event) => updateDraft(() => setCtaDestination(event.target.value))}
+                          onChange={(event) => updateDraft(() => setCtaDestination(event.target.value), "ctaDestination")}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
                         >
+                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                           {CTA_DESTINATION_OPTIONS.map((option) => (
                             <option key={option} value={option}>{option}</option>
                           ))}
@@ -1961,7 +2115,7 @@ export default function BuilderPage() {
                     {ctaAction === "Custom" ? (
                       <input
                         value={customCtaAction}
-                        onChange={(event) => updateDraft(() => setCustomCtaAction(event.target.value))}
+                        onChange={(event) => updateDraft(() => setCustomCtaAction(event.target.value), "customCtaAction")}
                         className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         placeholder="Describe the visitor action you want"
                         disabled={bootstrapping || loading || !projectId}
@@ -1970,7 +2124,7 @@ export default function BuilderPage() {
                     {ctaDestination === "Custom" ? (
                       <input
                         value={customCtaDestination}
-                        onChange={(event) => updateDraft(() => setCustomCtaDestination(event.target.value))}
+                        onChange={(event) => updateDraft(() => setCustomCtaDestination(event.target.value), "customCtaDestination")}
                         className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         placeholder="Describe where the CTA should go"
                         disabled={bootstrapping || loading || !projectId}
@@ -1978,14 +2132,14 @@ export default function BuilderPage() {
                     ) : null}
                     <input
                       value={ctaButtonText}
-                      onChange={(event) => updateDraft(() => setCtaButtonText(event.target.value))}
+                      onChange={(event) => updateDraft(() => setCtaButtonText(event.target.value), "ctaButtonText")}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                       placeholder="CTA Button Text, for example: Contact Us, Get Started, Book a Demo"
                       disabled={bootstrapping || loading || !projectId}
                     />
                     <input
                       value={ctaLink}
-                      onChange={(event) => updateDraft(() => setCtaLink(event.target.value))}
+                      onChange={(event) => updateDraft(() => setCtaLink(event.target.value), "ctaLink")}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                       placeholder="Optional: paste URL, email, phone number, or anchor link"
                       disabled={bootstrapping || loading || !projectId}
@@ -2011,10 +2165,11 @@ export default function BuilderPage() {
                         <select
                           id="designStyle"
                           value={designStyle}
-                          onChange={(event) => updateDraft(() => setDesignStyle(event.target.value))}
+                          onChange={(event) => updateDraft(() => setDesignStyle(event.target.value), "designStyle")}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
                         >
+                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                           {DESIGN_STYLE_OPTIONS.map((option) => (
                             <option key={option} value={option}>{option}</option>
                           ))}
@@ -2025,10 +2180,11 @@ export default function BuilderPage() {
                         <select
                           id="colorPalette"
                           value={colorPalette}
-                          onChange={(event) => updateDraft(() => setColorPalette(event.target.value))}
+                          onChange={(event) => updateDraft(() => setColorPalette(event.target.value), "colorPalette")}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
                         >
+                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                           {COLOR_PALETTE_OPTIONS.map((option) => (
                             <option key={option} value={option}>{option}</option>
                           ))}
@@ -2038,7 +2194,7 @@ export default function BuilderPage() {
                     {designStyle === "Custom" ? (
                       <input
                         value={customDesignStyle}
-                        onChange={(event) => updateDraft(() => setCustomDesignStyle(event.target.value))}
+                        onChange={(event) => updateDraft(() => setCustomDesignStyle(event.target.value), "customDesignStyle")}
                         className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         placeholder="Describe a custom visual style"
                         disabled={bootstrapping || loading || !projectId}
@@ -2046,7 +2202,7 @@ export default function BuilderPage() {
                     ) : null}
                     <input
                       value={customColorPalette}
-                      onChange={(event) => updateDraft(() => setCustomColorPalette(event.target.value))}
+                      onChange={(event) => updateDraft(() => setCustomColorPalette(event.target.value), "customColorPalette")}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                       placeholder="Custom Color Palette, for example: navy blue, white, and gold"
                       disabled={bootstrapping || loading || !projectId}
@@ -2057,10 +2213,11 @@ export default function BuilderPage() {
                         <select
                           id="typographyVibe"
                           value={typographyVibe}
-                          onChange={(event) => updateDraft(() => setTypographyVibe(event.target.value))}
+                          onChange={(event) => updateDraft(() => setTypographyVibe(event.target.value), "typographyVibe")}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
                         >
+                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                           {TYPOGRAPHY_VIBE_OPTIONS.map((option) => (
                             <option key={option} value={option}>{option}</option>
                           ))}
@@ -2071,10 +2228,11 @@ export default function BuilderPage() {
                         <select
                           id="layoutDensity"
                           value={layoutDensity}
-                          onChange={(event) => updateDraft(() => setLayoutDensity(event.target.value))}
+                          onChange={(event) => updateDraft(() => setLayoutDensity(event.target.value), "layoutDensity")}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
                         >
+                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                           {LAYOUT_DENSITY_OPTIONS.map((option) => (
                             <option key={option} value={option}>{option}</option>
                           ))}
@@ -2085,10 +2243,11 @@ export default function BuilderPage() {
                         <select
                           id="animationLevel"
                           value={animationLevel}
-                          onChange={(event) => updateDraft(() => setAnimationLevel(event.target.value))}
+                          onChange={(event) => updateDraft(() => setAnimationLevel(event.target.value), "animationLevel")}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
                         >
+                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
                           {ANIMATION_LEVEL_OPTIONS.map((option) => (
                             <option key={option} value={option}>{option}</option>
                           ))}
@@ -2097,7 +2256,7 @@ export default function BuilderPage() {
                     </div>
                     <textarea
                       value={referenceWebsites}
-                      onChange={(event) => updateDraft(() => setReferenceWebsites(event.target.value))}
+                      onChange={(event) => updateDraft(() => setReferenceWebsites(event.target.value), "referenceWebsites")}
                       rows={3}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
                       placeholder="Reference Websites: Optional, paste websites you like"
@@ -2138,7 +2297,7 @@ export default function BuilderPage() {
                     ))}
                     <input
                       value={customSections}
-                      onChange={(event) => updateDraft(() => setCustomSections(event.target.value))}
+                      onChange={(event) => updateDraft(() => setCustomSections(event.target.value), "customSections")}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                       placeholder="For example: timeline, team, comparison table, gallery"
                       disabled={bootstrapping || loading || !projectId}
@@ -2160,7 +2319,7 @@ export default function BuilderPage() {
                   <div className="grid gap-3 border-t border-zinc-100 p-4">
                     <textarea
                       value={requiredCopy}
-                      onChange={(event) => updateDraft(() => setRequiredCopy(event.target.value))}
+                      onChange={(event) => updateDraft(() => setRequiredCopy(event.target.value), "requiredCopy")}
                       rows={4}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
                       placeholder="Required Copy / Content: Paste exact text, product descriptions, pricing plans, FAQ, testimonials, or business details."
@@ -2168,7 +2327,7 @@ export default function BuilderPage() {
                     />
                     <textarea
                       value={specialInstructions}
-                      onChange={(event) => updateDraft(() => setSpecialInstructions(event.target.value))}
+                      onChange={(event) => updateDraft(() => setSpecialInstructions(event.target.value), "specialInstructions")}
                       rows={3}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
                       placeholder="Special Instructions, for example: make the website sound premium but not too corporate."
@@ -2176,7 +2335,7 @@ export default function BuilderPage() {
                     />
                     <textarea
                       value={structuredData}
-                      onChange={(event) => updateDraft(() => setStructuredData(event.target.value))}
+                      onChange={(event) => updateDraft(() => setStructuredData(event.target.value), "structuredData")}
                       rows={4}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-zinc-400 focus:ring-2"
                       placeholder="Data / Structured Information, for example: pricing plans, service list, team members, locations, opening hours."
@@ -2214,13 +2373,17 @@ export default function BuilderPage() {
                   {includeGuidedFields ? "Included context" : "Guided fields excluded"}
                 </p>
                 {includeGuidedFields ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {guidedContextChips.map((chip) => (
-                      <span key={chip} className="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[11px] text-violet-800">
-                        {chip}
-                      </span>
-                    ))}
-                  </div>
+                  guidedContextChips.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {guidedContextChips.map((chip) => (
+                        <span key={chip} className="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[11px] text-violet-800">
+                          {chip}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-1">No guided fields added yet. Open Guided fields above to add context.</p>
+                  )
                 ) : (
                   <p className="mt-1">Only the text you type below will be sent.</p>
                 )}
@@ -2267,7 +2430,7 @@ export default function BuilderPage() {
                       className="shrink-0 rounded-lg border border-current px-2 py-1 text-[11px] font-medium"
                       disabled={loading || editPreviewLoading || deployIntentLoading}
                     >
-                      Clear
+                      Back
                     </button>
                   </div>
                   <textarea
@@ -3034,22 +3197,28 @@ export default function BuilderPage() {
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Live Preview starts automatically and syncs file changes. Backend verification only affects deploy readiness.
+                  Live Preview syncs file changes in-app. Open in New Tab builds a backend static preview that can run independently.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {activePreviewUrl ? (
-                  <a
-                    href={activePreviewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+                {canOpenStaticPreview ? (
+                  <button
+                    type="button"
+                    onClick={() => void openStaticPreviewInNewTab()}
+                    disabled={staticPreviewLoading || loading || !projectId}
+                    className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300"
                   >
-                    Open in New Tab
-                  </a>
+                    {staticPreviewLoading ? "Building Preview..." : "Open in New Tab"}
+                  </button>
                 ) : null}
               </div>
             </div>
+
+            {staticPreviewError ? (
+              <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                Static preview failed: {staticPreviewError}
+              </div>
+            ) : null}
 
             {webError ? (
               <div className="flex flex-col gap-2 border-b border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 sm:flex-row sm:items-center sm:justify-between">
