@@ -1,6 +1,14 @@
 from datetime import UTC, datetime
+import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+PACKAGE_SPEC_PATTERN = re.compile(
+    r"^(@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)"
+    r"(@[a-z0-9][a-z0-9._+~:-]*)?$",
+    re.IGNORECASE,
+)
 
 
 class TerminalHistoryEntry(BaseModel):
@@ -30,6 +38,24 @@ class TerminalRecordRequest(BaseModel):
 class InstallPackagesRequest(BaseModel):
     packages: list[str] = Field(..., min_length=1)
     dev: bool = False
+
+    @field_validator("packages")
+    @classmethod
+    def validate_packages(cls, packages: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for package in packages:
+            spec = package.strip()
+            if not spec:
+                raise ValueError("Package names cannot be empty")
+            if spec.startswith("-") or not PACKAGE_SPEC_PATTERN.fullmatch(spec):
+                raise ValueError(f"Invalid npm package spec: {package}")
+            if spec not in seen:
+                normalized.append(spec)
+                seen.add(spec)
+
+        return normalized
 
 
 class InstallPackagesResponse(BaseModel):

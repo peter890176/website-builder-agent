@@ -24,3 +24,142 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+:where(
+  button,
+  a[href],
+  summary,
+  select,
+  input[type="button"],
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="reset"],
+  input[type="submit"],
+  label:has(input),
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [data-radix-collection-item],
+  .guided-trigger,
+  .cursor-pointer
+):not(:disabled):not([aria-disabled="true"]) {
+  cursor: pointer !important;
+}
+
+:where(
+  button,
+  a[href],
+  summary,
+  select,
+  input[type="button"],
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="reset"],
+  input[type="submit"],
+  label:has(input),
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  [data-radix-collection-item],
+  .guided-trigger
+):not(:disabled):not([aria-disabled="true"]) * {
+  cursor: pointer !important;
+}
+
+:where(
+  button:disabled,
+  input:disabled,
+  select:disabled,
+  textarea:disabled,
+  [aria-disabled="true"],
+  .cursor-not-allowed
+) {
+  cursor: not-allowed !important;
+}
+
+:where(
+  button:disabled,
+  input:disabled,
+  select:disabled,
+  textarea:disabled,
+  [aria-disabled="true"],
+  .cursor-not-allowed
+) * {
+  cursor: not-allowed !important;
+}
+
+.builder-dark {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(124, 58, 237, 0.22), transparent 32rem),
+    radial-gradient(circle at 85% 12%, rgba(14, 165, 233, 0.14), transparent 30rem),
+    linear-gradient(135deg, #020617 0%, #09090b 48%, #111827 100%);
+  color: #f4f4f5;
+}
+
+.builder-dark .bg-white {
+  background-color: rgba(24, 24, 27, 0.9) !important;
+}
+
+.builder-dark .bg-zinc-50,
+.builder-dark .bg-zinc-100 {
+  background-color: rgba(39, 39, 42, 0.72) !important;
+}
+
+.builder-dark .border-zinc-100,
+.builder-dark .border-zinc-200,
+.builder-dark .border-zinc-300 {
+  border-color: rgba(63, 63, 70, 0.9) !important;
+}
+
+.builder-dark .border-b-white {
+  border-bottom-color: rgba(24, 24, 27, 0.9) !important;
+}
+
+.builder-dark .text-zinc-950,
+.builder-dark .text-zinc-900,
+.builder-dark .text-zinc-800 {
+  color: #f4f4f5 !important;
+}
+
+.builder-dark .text-zinc-700,
+.builder-dark .text-zinc-600 {
+  color: #d4d4d8 !important;
+}
+
+.builder-dark .text-zinc-500,
+.builder-dark .text-zinc-400 {
+  color: #a1a1aa !important;
+}
+
+.builder-dark input,
+.builder-dark select,
+.builder-dark textarea {
+  background-color: rgba(9, 9, 11, 0.78) !important;
+  border-color: rgba(82, 82, 91, 0.9) !important;
+  color: #f4f4f5 !important;
+}
+
+.builder-dark input::placeholder,
+.builder-dark textarea::placeholder {
+  color: #71717a !important;
+}
+
+.builder-dark button:not(:disabled) {
+  color: inherit;
+}
+
+.builder-dark .builder-modal-panel {
+  background: #09090b !important;
+}
+
+.builder-dark .guided-trigger:hover {
+  background-color: rgba(39, 39, 42, 0.92) !important;
+}
+
+.builder-dark .guided-trigger:hover span {
+  color: #f4f4f5 !important;
+}
+
+.builder-dark .shadow-sm {
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.25) !important;
+}

@@ -2,6 +2,8 @@
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import * as Accordion from "@radix-ui/react-accordion";
+import * as Tabs from "@radix-ui/react-tabs";
 
 import { ExportDeployPanel } from "@/components/ExportDeployPanel";
 import { HistoryPanel } from "@/components/HistoryPanel";
@@ -627,7 +629,7 @@ function editAgentStatusClass(status: "idle" | "editing" | "review" | "applying"
     return "bg-zinc-100 text-zinc-500";
   }
   if (status === "review") {
-    return "bg-violet-100 text-violet-800";
+    return "bg-cyan-100 text-cyan-800";
   }
   return "bg-amber-100 text-amber-800";
 }
@@ -681,6 +683,17 @@ function appendPromptSection(lines: string[], title: string, entries: Array<[str
     lines.push(`\n## ${title}`, ...content);
   }
 }
+
+const WEBSITE_DESIGN_INSTRUCTION_BLOCK = [
+  "\n## Design System Instructions",
+  "Use a design-system-first approach. Prefer reusable UI primitives such as Container, Section, SectionHeader, Button, Card, and Badge instead of raw unstructured divs.",
+  "Default to a centered hero with a clear headline, supporting copy, and CTA group.",
+  "Center section headers by default and keep text in readable max-width containers.",
+  "Use max-width page containers, consistent section spacing, responsive grids, and card-based content groups.",
+  "Keep card, button, badge, typography, radius, color, border, and shadow rules consistent across the site.",
+  "Avoid plain document-style, all-left-aligned pages unless the user explicitly asks for that style.",
+  "Make desktop and mobile layouts feel intentional and avoid horizontal overflow.",
+];
 
 function buildStructuredWebsitePrompt({
   websiteType,
@@ -804,6 +817,7 @@ function buildStructuredWebsitePrompt({
   }
 
   lines.push(
+    ...WEBSITE_DESIGN_INSTRUCTION_BLOCK,
     "\n## Generation Instructions",
     "Use a multi-file React component architecture and split major sections into maintainable components.",
     "Keep design tokens, spacing, typography, radius, and interaction states consistent across sections.",
@@ -875,6 +889,7 @@ export default function BuilderPage() {
   const [fileSaving, setFileSaving] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [webPreviewUrl, setWebPreviewUrl] = useState<string | null>(null);
+  const [previewVersion, setPreviewVersion] = useState(0);
   const [, setWebLogs] = useState<string[]>([]);
   const [webBooting, setWebBooting] = useState(false);
   const [webError, setWebError] = useState<string | null>(null);
@@ -903,7 +918,7 @@ export default function BuilderPage() {
   const activePreviewUrl = webPreviewUrl;
   const previewSource = webPreviewUrl ? "live" : "none";
   const verificationStatus = verifyLoading ? "verifying" : diagnostics?.status ?? "idle";
-  const changedFiles = result?.changed_files ?? [];
+  const changedFiles = useMemo(() => result?.changed_files ?? [], [result?.changed_files]);
   const hasProjectDraft = Boolean(result) || ["live_unverified", "verifying", "passed", "failed"].includes(diagnostics?.status ?? "");
   const canOpenBuiltPreview = Boolean(projectId && (hasProjectDraft || projectFiles.length > 0));
   const allGuidedSectionsOpen = GUIDED_SECTION_IDS.every((sectionId) => openBuilderSections.includes(sectionId));
@@ -1258,6 +1273,7 @@ export default function BuilderPage() {
           onServerReady: (url) => setWebPreviewUrl(url),
         },
       );
+      setPreviewVersion((current) => current + 1);
     } catch (err: unknown) {
       setFileError(err instanceof Error ? err.message : "Unable to save file");
     } finally {
@@ -1427,6 +1443,7 @@ export default function BuilderPage() {
         onLog: (line) => setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
         onServerReady: (url) => setWebPreviewUrl(url),
       });
+      setPreviewVersion((current) => current + 1);
     } catch (err: unknown) {
       setFileError(err instanceof Error ? err.message : "Unable to create file");
     } finally {
@@ -1455,6 +1472,7 @@ export default function BuilderPage() {
       await renameFileInWebContainer(selectedFile, normalizedPath, (line) =>
         setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
       );
+      setPreviewVersion((current) => current + 1);
 
       setSelectedFile(normalizedPath);
       setOpenFiles((current) => current.map((file) => file === selectedFile ? normalizedPath : file));
@@ -1485,6 +1503,7 @@ export default function BuilderPage() {
       await deleteFileFromWebContainer(deletingPath, (line) =>
         setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
       );
+      setPreviewVersion((current) => current + 1);
 
       setSelectedFile(null);
       setOpenFiles((current) => current.filter((file) => file !== deletingPath));
@@ -1543,6 +1562,7 @@ export default function BuilderPage() {
         setFileContent(selectedUpdate.content);
         setSavedFileContent(selectedUpdate.content);
       }
+      setPreviewVersion((current) => current + 1);
     } catch (err: unknown) {
       setWebError(err instanceof Error ? err.message : "Unable to sync files to WebContainer");
     } finally {
@@ -1573,14 +1593,6 @@ export default function BuilderPage() {
           : [...current, section],
       );
     }, "sections");
-  }
-
-  function toggleBuilderSection(sectionId: string) {
-    setOpenBuilderSections((current) =>
-      current.includes(sectionId)
-        ? current.filter((item) => item !== sectionId)
-        : [...current, sectionId],
-    );
   }
 
   function toggleAllBuilderSections() {
@@ -1889,44 +1901,47 @@ export default function BuilderPage() {
   }
 
   return (
-    <div className="min-h-full bg-zinc-50 text-zinc-900">
-      <div className="mx-auto flex min-h-full max-w-[1800px] flex-col gap-6 px-4 py-8 lg:flex-row">
+    <div className="builder-dark min-h-full text-zinc-100">
+      <div className="mx-auto flex min-h-full max-w-[1840px] flex-col gap-5 px-4 py-6 lg:flex-row">
         <section className="flex w-full flex-col gap-4 lg:h-[calc(100vh-4rem)] lg:min-h-0 lg:w-[520px] lg:min-w-[360px] lg:max-w-[760px] lg:shrink-0 lg:resize-x lg:overflow-hidden">
           <div className="order-0 shrink-0">
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+            <h1 className="text-2xl font-semibold tracking-tight text-white">
               AI Website Builder
             </h1>
-            <p className="mt-2 text-sm leading-6 text-zinc-600">
-              Start with a message, then refine details with Guided fields if needed.
+            <p className="mt-2 text-sm leading-6 text-zinc-400">
+              Describe the site. Refine only when needed.
             </p>
           </div>
 
-          <div className="order-1 min-h-0 flex-1 overflow-auto rounded-xl border border-zinc-200 bg-white p-4 text-sm">
+          <div className="order-1 min-h-0 flex-1 overflow-auto rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 text-sm shadow-sm backdrop-blur">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="font-medium text-zinc-700">Guided fields</p>
-                <p className="mt-1 text-xs text-zinc-500">Used as context for AI.</p>
+                <p className="font-medium text-zinc-100">Guided fields</p>
+                <p className="mt-1 text-xs text-zinc-400">Optional context for AI.</p>
               </div>
               <button
                 type="button"
                 onClick={toggleAllBuilderSections}
-                className="shrink-0 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+                className="shrink-0 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-cyan-500/60 hover:bg-cyan-500/10 hover:text-cyan-100"
               >
                 {allGuidedSectionsOpen ? "Collapse all" : "Expand all"}
               </button>
             </div>
 
-            <div className="mt-4 flex flex-col gap-3">
-              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-                <button
-                  type="button"
-                  onClick={() => toggleBuilderSection("websiteGoal")}
-                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
-                >
+            <Accordion.Root
+              type="multiple"
+              value={openBuilderSections}
+              onValueChange={setOpenBuilderSections}
+              className="mt-4 flex flex-col gap-3"
+            >
+              <Accordion.Item value="websiteGoal" className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <Accordion.Header>
+                <Accordion.Trigger className="guided-trigger flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition">
                   <span className="block text-sm font-medium text-zinc-800">Website Goal</span>
                   <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("websiteGoal") ? "Hide" : "Open"}</span>
-                </button>
-                {openBuilderSections.includes("websiteGoal") ? (
+                </Accordion.Trigger>
+                </Accordion.Header>
+                <Accordion.Content>
                   <div className="border-t border-zinc-100 p-4">
                     <div className="grid gap-3">
                       <label className="text-sm font-medium text-zinc-700" htmlFor="websiteType">Website Type</label>
@@ -1997,19 +2012,17 @@ export default function BuilderPage() {
                       ) : null}
                     </div>
                   </div>
-                ) : null}
-              </div>
+                </Accordion.Content>
+              </Accordion.Item>
 
-              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-                <button
-                  type="button"
-                  onClick={() => toggleBuilderSection("brandAudience")}
-                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
-                >
+              <Accordion.Item value="brandAudience" className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <Accordion.Header>
+                <Accordion.Trigger className="guided-trigger flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition">
                   <span className="block text-sm font-medium text-zinc-800">Brand & Audience</span>
                   <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("brandAudience") ? "Hide" : "Open"}</span>
-                </button>
-                {openBuilderSections.includes("brandAudience") ? (
+                </Accordion.Trigger>
+                </Accordion.Header>
+                <Accordion.Content>
                   <div className="grid gap-3 border-t border-zinc-100 p-4">
                     <input
                       value={brandName}
@@ -2058,19 +2071,17 @@ export default function BuilderPage() {
                       />
                     ) : null}
                   </div>
-                ) : null}
-              </div>
+                </Accordion.Content>
+              </Accordion.Item>
 
-              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-                <button
-                  type="button"
-                  onClick={() => toggleBuilderSection("primaryCta")}
-                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
-                >
+              <Accordion.Item value="primaryCta" className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <Accordion.Header>
+                <Accordion.Trigger className="guided-trigger flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition">
                   <span className="block text-sm font-medium text-zinc-800">Primary CTA</span>
                   <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("primaryCta") ? "Hide" : "Open"}</span>
-                </button>
-                {openBuilderSections.includes("primaryCta") ? (
+                </Accordion.Trigger>
+                </Accordion.Header>
+                <Accordion.Content>
                   <div className="grid gap-3 border-t border-zinc-100 p-4">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
@@ -2137,19 +2148,17 @@ export default function BuilderPage() {
                       disabled={bootstrapping || loading || !projectId}
                     />
                   </div>
-                ) : null}
-              </div>
+                </Accordion.Content>
+              </Accordion.Item>
 
-              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-                <button
-                  type="button"
-                  onClick={() => toggleBuilderSection("designPreferences")}
-                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
-                >
+              <Accordion.Item value="designPreferences" className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <Accordion.Header>
+                <Accordion.Trigger className="guided-trigger flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition">
                   <span className="block text-sm font-medium text-zinc-800">Design Preferences</span>
                   <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("designPreferences") ? "Hide" : "Open"}</span>
-                </button>
-                {openBuilderSections.includes("designPreferences") ? (
+                </Accordion.Trigger>
+                </Accordion.Header>
+                <Accordion.Content>
                   <div className="grid gap-3 border-t border-zinc-100 p-4">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
@@ -2255,19 +2264,17 @@ export default function BuilderPage() {
                       disabled={bootstrapping || loading || !projectId}
                     />
                   </div>
-                ) : null}
-              </div>
+                </Accordion.Content>
+              </Accordion.Item>
 
-              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-                <button
-                  type="button"
-                  onClick={() => toggleBuilderSection("pagesSections")}
-                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
-                >
+              <Accordion.Item value="pagesSections" className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <Accordion.Header>
+                <Accordion.Trigger className="guided-trigger flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition">
                   <span className="block text-sm font-medium text-zinc-800">Pages & Sections</span>
                   <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("pagesSections") ? "Hide" : "Open"}</span>
-                </button>
-                {openBuilderSections.includes("pagesSections") ? (
+                </Accordion.Trigger>
+                </Accordion.Header>
+                <Accordion.Content>
                   <div className="grid gap-4 border-t border-zinc-100 p-4">
                     {SECTION_GROUPS.map((group) => (
                       <div key={group.title}>
@@ -2295,19 +2302,17 @@ export default function BuilderPage() {
                       disabled={bootstrapping || loading || !projectId}
                     />
                   </div>
-                ) : null}
-              </div>
+                </Accordion.Content>
+              </Accordion.Item>
 
-              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-                <button
-                  type="button"
-                  onClick={() => toggleBuilderSection("additionalRequirements")}
-                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
-                >
+              <Accordion.Item value="additionalRequirements" className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+                <Accordion.Header>
+                <Accordion.Trigger className="guided-trigger flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition">
                   <span className="block text-sm font-medium text-zinc-800">Additional Requirements</span>
                   <span className="text-xs font-medium text-zinc-500">{openBuilderSections.includes("additionalRequirements") ? "Hide" : "Open"}</span>
-                </button>
-                {openBuilderSections.includes("additionalRequirements") ? (
+                </Accordion.Trigger>
+                </Accordion.Header>
+                <Accordion.Content>
                   <div className="grid gap-3 border-t border-zinc-100 p-4">
                     <textarea
                       value={requiredCopy}
@@ -2334,31 +2339,36 @@ export default function BuilderPage() {
                       disabled={bootstrapping || loading || !projectId}
                     />
                   </div>
-                ) : null}
-              </div>
-            </div>
+                </Accordion.Content>
+              </Accordion.Item>
+            </Accordion.Root>
           </div>
 
           {projectId ? (
-            <form onSubmit={handleEditSubmit} className="order-2 flex shrink-0 flex-col gap-3 rounded-xl border border-violet-200 bg-white p-4 shadow-sm">
+            <form onSubmit={handleEditSubmit} className="order-2 flex shrink-0 flex-col gap-3 rounded-2xl border border-cyan-500/25 bg-slate-950/90 p-4 shadow-sm backdrop-blur">
               <div className="flex items-start justify-between gap-3">
-                <label htmlFor="aiPrompt" className="text-sm font-medium text-violet-950">
+                <label htmlFor="aiPrompt" className="text-sm font-medium text-cyan-100">
                   Ask AI
                 </label>
-                <label className="flex shrink-0 items-center gap-2 text-xs font-medium text-zinc-600">
-                  <input
-                    type="checkbox"
-                    checked={includeGuidedFields}
-                    onChange={(event) => setIncludeGuidedFields(event.target.checked)}
-                    disabled={bootstrapping || loading || deployIntentLoading || !projectId}
-                  />
-                  Include guided fields
-                </label>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${editAgentStatusClass(editAgentStatus)}`}>
+                    {editAgentStatusLabel(editAgentStatus)}
+                  </span>
+                  <label className="flex items-center gap-2 text-xs font-medium text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={includeGuidedFields}
+                      onChange={(event) => setIncludeGuidedFields(event.target.checked)}
+                      disabled={bootstrapping || loading || deployIntentLoading || !projectId}
+                    />
+                    Include guided fields
+                  </label>
+                </div>
               </div>
 
               <div className={`rounded-xl border px-3 py-2 text-xs leading-5 ${
                 includeGuidedFields
-                  ? "border-violet-100 bg-violet-50/60 text-violet-900"
+                  ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
                   : "border-zinc-200 bg-zinc-50 text-zinc-500"
               }`}>
                 <p className="font-medium">
@@ -2368,7 +2378,7 @@ export default function BuilderPage() {
                   guidedContextChips.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {guidedContextChips.map((chip) => (
-                        <span key={chip} className="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[11px] text-violet-800">
+                        <span key={chip} className="rounded-full border border-cyan-500/30 bg-slate-900 px-2 py-0.5 text-[11px] text-cyan-100">
                           {chip}
                         </span>
                       ))}
@@ -2389,7 +2399,7 @@ export default function BuilderPage() {
                   setAiMessage(event.target.value);
                   setPendingDeployIntent(null);
                 }}
-                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm leading-6 outline-none ring-violet-400 focus:ring-2"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none ring-cyan-400 focus:ring-2"
                 placeholder={
                   hasProjectDraft
                     ? "For example: research stronger CTA copy, update the Hero, then prepare a Diff Review"
@@ -2429,7 +2439,7 @@ export default function BuilderPage() {
                     value={promptPreview}
                     onChange={(event) => setPromptPreview(event.target.value)}
                     rows={7}
-                    className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-[11px] leading-5 text-zinc-800 outline-none ring-violet-400 focus:ring-2"
+                    className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-[11px] leading-5 text-zinc-800 outline-none ring-cyan-400 focus:ring-2"
                     disabled={loading || editPreviewLoading || editApplyLoading || deployIntentLoading}
                   />
                 </div>
@@ -2514,7 +2524,7 @@ export default function BuilderPage() {
                     <button
                       type="button"
                       onClick={() => setIncludeSelection(false)}
-                      className="rounded-full border border-violet-200 bg-white px-2 py-1 font-mono text-[11px] text-violet-700 hover:bg-violet-50"
+                      className="rounded-full border border-cyan-500/30 bg-white px-2 py-1 font-mono text-[11px] text-cyan-700 hover:bg-cyan-50"
                       title="Remove selected text context"
                     >
                       Selection: {selectedEditorText.split(/\r?\n/).length} lines x
@@ -2601,7 +2611,7 @@ export default function BuilderPage() {
                       <input
                         value={contextSearch}
                         onChange={(event) => setContextSearch(event.target.value)}
-                        className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-xs outline-none ring-violet-400 focus:ring-2"
+                        className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-xs outline-none ring-cyan-400 focus:ring-2"
                         placeholder="Search files to add context..."
                       />
                       <div className="mt-2 max-h-40 overflow-auto rounded-lg border border-zinc-200">
@@ -2643,7 +2653,7 @@ export default function BuilderPage() {
                     || !projectId
                     || !selectedEditorText
                   }
-                  className="rounded-xl border border-violet-200 px-4 py-2.5 text-sm font-medium text-violet-800 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:text-violet-300"
+                  className="rounded-xl border border-cyan-500/35 px-4 py-2.5 text-sm font-medium text-cyan-100 transition hover:bg-cyan-500/10 disabled:cursor-not-allowed disabled:text-zinc-500"
                 >
                   Edit Selection with AI
                 </button>
@@ -2670,7 +2680,7 @@ export default function BuilderPage() {
                     || !projectId
                     || (promptPreview && !promptPreviewDirty ? !canRunPromptPreview : !canGeneratePrompt)
                   }
-                  className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400 sm:flex-1"
+                  className="rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-zinc-500 sm:flex-1"
                 >
                   {deployIntentLoading
                     ? "Deploying..."
@@ -2697,11 +2707,11 @@ export default function BuilderPage() {
           ) : null}
 
           {editPreview ? (
-            <div className="rounded-xl border border-violet-200 bg-white p-4 text-sm shadow-sm">
+            <div className="rounded-xl border border-cyan-500/30 bg-white p-4 text-sm shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <div className="flex items-center gap-2">
-                    <p className="font-medium text-violet-950">Diff Review</p>
+                    <p className="font-medium text-cyan-100">Diff Review</p>
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                         editPreview.change_size === "large"
@@ -2731,7 +2741,7 @@ export default function BuilderPage() {
                   <button
                     type="button"
                     onClick={() => void acceptEditPreview()}
-                    className="rounded-lg bg-violet-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:bg-violet-300"
+                    className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-zinc-500"
                     disabled={editApplyLoading || editPreview.patches.length === 0}
                   >
                     {editApplyLoading ? "Applying..." : "Accept & Apply"}
@@ -2791,7 +2801,7 @@ export default function BuilderPage() {
             </button>
           </div>
 
-          <div className="order-2 rounded-xl border border-zinc-200 bg-white shadow-sm">
+          <div className="order-3 rounded-xl border border-zinc-200 bg-white shadow-sm">
             <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-sm font-medium text-zinc-700">IDE</h2>
@@ -2993,7 +3003,7 @@ export default function BuilderPage() {
             ) : null}
           </div>
 
-          <div className="order-3 rounded-xl border border-zinc-200 bg-white shadow-sm">
+          <div className="order-2 rounded-xl border border-zinc-200 bg-white shadow-sm">
             <div className="border-b border-zinc-200 px-4 py-3">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -3008,18 +3018,21 @@ export default function BuilderPage() {
               </div>
             </div>
 
+            <Tabs.Root
+              value={activeToolTab}
+              onValueChange={(value) => setActiveToolTab(value as "problems" | "logs" | "terminal" | "jobs")}
+            >
             <div className="border-b border-zinc-200 px-3 pt-3">
-              <div className="flex flex-wrap gap-2">
+              <Tabs.List className="flex flex-wrap gap-2" aria-label="Workspace tools">
                 {[
                   { id: "jobs", label: "Jobs", badge: 0 },
                   { id: "problems", label: "Problems", badge: problemCount },
                   { id: "logs", label: "Build Logs", badge: hasBuildLog ? 1 : 0 },
                   { id: "terminal", label: "Terminal", badge: 0 },
                 ].map((tab) => (
-                  <button
+                  <Tabs.Trigger
                     key={tab.id}
-                    type="button"
-                    onClick={() => setActiveToolTab(tab.id as "problems" | "logs" | "terminal" | "jobs")}
+                    value={tab.id}
                     className={`rounded-t-lg px-3 py-2 text-xs font-medium ${
                       activeToolTab === tab.id
                         ? "border border-b-white border-zinc-200 bg-white text-zinc-900"
@@ -3036,13 +3049,13 @@ export default function BuilderPage() {
                         {tab.badge}
                       </span>
                     ) : null}
-                  </button>
+                  </Tabs.Trigger>
                 ))}
-              </div>
+              </Tabs.List>
             </div>
 
             <div className="min-h-52 p-4 text-sm">
-              {activeToolTab === "problems" ? (
+              <Tabs.Content value="problems">
                 <div className="space-y-3">
                   <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-xs leading-5 text-zinc-600">
@@ -3128,10 +3141,10 @@ export default function BuilderPage() {
                     </p>
                   ) : null}
                 </div>
-              ) : null}
+              </Tabs.Content>
 
-              {activeToolTab === "logs" ? (
-                hasBuildLog ? (
+              <Tabs.Content value="logs">
+                {hasBuildLog ? (
                   <div className={`rounded-lg border ${
                     buildLogTone === "success"
                       ? "border-emerald-200 bg-emerald-50"
@@ -3158,21 +3171,22 @@ export default function BuilderPage() {
                   <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
                     No build log yet.
                   </p>
-                )
-              ) : null}
+                )}
+              </Tabs.Content>
 
-              {activeToolTab === "terminal" ? (
+              <Tabs.Content value="terminal">
                 <TerminalPanel
                   projectId={projectId}
                   compact
                   onServerReady={(url) => setWebPreviewUrl(url)}
                 />
-              ) : null}
+              </Tabs.Content>
 
-              {activeToolTab === "jobs" ? (
+              <Tabs.Content value="jobs">
                 <JobPanel projectId={projectId} compact />
-              ) : null}
+              </Tabs.Content>
             </div>
+            </Tabs.Root>
           </div>
 
           <div className="order-1 flex flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
@@ -3238,7 +3252,7 @@ export default function BuilderPage() {
                   </div>
                 ) : null}
                 <iframe
-                  key={`${previewSource}-${activePreviewUrl}`}
+                  key={`${previewSource}-${activePreviewUrl}-${previewVersion}`}
                   title="Website preview"
                   src={activePreviewUrl}
                   scrolling="yes"
@@ -3256,7 +3270,7 @@ export default function BuilderPage() {
 
       {historyOpen ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 px-4 py-6"
+          className="fixed inset-0 z-50 flex cursor-pointer items-center justify-center bg-zinc-950/90 px-4 py-6 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-label="Version history"
@@ -3266,7 +3280,7 @@ export default function BuilderPage() {
             }
           }}
         >
-          <div className="flex h-[68vh] max-h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div className="builder-modal-panel flex h-[68vh] max-h-[82vh] w-full max-w-4xl cursor-default flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl">
             <div className="shrink-0 flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-900">Version History</h2>
@@ -3314,7 +3328,7 @@ export default function BuilderPage() {
 
       {exportDeployOpen ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 px-4 py-6"
+          className="fixed inset-0 z-50 flex cursor-pointer items-center justify-center bg-zinc-950/90 px-4 py-6 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-label="Export and deploy"
@@ -3324,7 +3338,7 @@ export default function BuilderPage() {
             }
           }}
         >
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white shadow-2xl">
+          <div className="builder-modal-panel max-h-[90vh] w-full max-w-3xl cursor-default overflow-auto rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl">
             <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-900">Export / Deploy</h2>

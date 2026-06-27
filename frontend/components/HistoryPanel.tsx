@@ -30,6 +30,8 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
   const [snapshotLabel, setSnapshotLabel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<ProjectSnapshot | null>(null);
 
   const refresh = useCallback(async () => {
     if (!projectId) {
@@ -57,6 +59,7 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
     }
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
       const label = snapshotLabel.trim() || "Manual snapshot";
       await createSnapshot(projectId, {
@@ -66,6 +69,7 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
         notes: `Created from History panel${snapshotLabel.trim() ? "" : " without a custom label"}`,
       });
       setSnapshotLabel("");
+      setNotice(`Snapshot "${label}" created.`);
       await refresh();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to create snapshot");
@@ -74,15 +78,18 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
     }
   }
 
-  async function restore(snapshotId: string) {
-    if (!projectId || !window.confirm("Roll back to this version? The current src/public files will be overwritten.")) {
+  async function restore(snapshot: ProjectSnapshot) {
+    if (!projectId) {
       return;
     }
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
-      const response = await restoreSnapshot(projectId, snapshotId);
+      const response = await restoreSnapshot(projectId, snapshot.id);
       await onRestore(response.changed_files);
+      setNotice(`Restored "${snapshot.label}" and synced ${response.changed_files.length} files.`);
+      setRestoreTarget(null);
       await refresh();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to restore snapshot");
@@ -97,6 +104,7 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
     }
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
       await deleteSnapshot(projectId, snapshot.id);
       if (compareFrom === snapshot.id) {
@@ -162,6 +170,7 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
       </div>
       <div className={chrome ? "space-y-3 p-4 text-sm" : "space-y-3 text-sm"}>
         {error ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div> : null}
+        {notice ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">{notice}</div> : null}
         <div className="grid gap-3 lg:grid-cols-2">
           <div>
             <p className="mb-2 text-xs font-medium text-zinc-500">Snapshots</p>
@@ -174,7 +183,7 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
                       <p className="text-xs text-zinc-500">{snapshot.kind} · {snapshot.file_count} files · {snapshot.verified ? "verified" : "unverified"}</p>
                     </div>
                     <div className="flex shrink-0 gap-2">
-                      <button type="button" onClick={() => void restore(snapshot.id)} disabled={loading} className="text-xs font-medium text-violet-700 hover:underline disabled:text-zinc-300">
+                      <button type="button" onClick={() => setRestoreTarget(snapshot)} disabled={loading} className="text-xs font-medium text-cyan-700 hover:underline disabled:text-zinc-300">
                         Restore
                       </button>
                       <button
@@ -239,6 +248,47 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
           </div>
         ) : null}
       </div>
+      {restoreTarget ? (
+        <div
+          className="fixed inset-0 z-[70] flex cursor-pointer items-center justify-center bg-zinc-950/80 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm snapshot restore"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !loading) {
+              setRestoreTarget(null);
+            }
+          }}
+        >
+          <div className="w-full max-w-md cursor-default rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
+            <h3 className="text-sm font-semibold text-zinc-100">Restore Snapshot</h3>
+            <p className="mt-2 text-sm leading-6 text-zinc-300">
+              Restore &quot;{restoreTarget.label}&quot;? Current editable project files will be overwritten by this version.
+            </p>
+            <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
+              {restoreTarget.kind} - {restoreTarget.file_count} files - {restoreTarget.verified ? "verified" : "unverified"}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRestoreTarget(null)}
+                disabled={loading}
+                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:text-zinc-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void restore(restoreTarget)}
+                disabled={loading}
+                className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-cyan-500 disabled:bg-zinc-600"
+              >
+                {loading ? "Restoring..." : "Restore"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 
