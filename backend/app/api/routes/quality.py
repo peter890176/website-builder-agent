@@ -22,6 +22,32 @@ from app.services.workspace import ensure_project_dir, write_project_file
 
 router = APIRouter(prefix="/api/projects/{project_id}/quality", tags=["quality"])
 
+DESIGN_POLISH_INSTRUCTIONS = """Polish the current website's visual design only.
+
+Improve:
+- layout composition and section rhythm
+- spacing consistency
+- alignment and visual hierarchy
+- typography scale and readable line length
+- responsive grids and mobile behavior
+- card, button, radius, color, border, and shadow consistency
+
+Use existing shared UI primitives from src/components/ui.tsx when that file already exists:
+Container, Section, SectionHeader, Button, Card, and Badge.
+If shared primitives do not exist in the current project, polish the existing components and CSS instead.
+
+Do not change:
+- business logic
+- routes
+- data schema or JSON field names
+- user-provided copy
+- API logic
+- core content meaning
+- npm dependencies
+
+Avoid plain document-style pages and long left-aligned text stacks. Keep the hero and section headers centered by default unless the current design clearly requires otherwise.
+"""
+
 
 @router.post("/review", response_model=QualityReviewResponse)
 def post_quality_review(project_id: str) -> QualityReviewResponse:
@@ -74,8 +100,12 @@ def post_design_polish_preview(project_id: str, body: DesignPolishRequest) -> De
     edit = clean_edit_patches(
         request_project_edit(
             project_dir,
-            body.focus,
-            diagnostics_summary="Design polish should improve visual hierarchy, responsive behavior, SEO, and accessibility.",
+            f"{DESIGN_POLISH_INSTRUCTIONS}\n\nAdditional focus:\n{body.focus}",
+            diagnostics_summary=(
+                "Design polish only. Improve visual hierarchy, layout, spacing, alignment, typography, "
+                "responsive behavior, and accessibility. Do not change business logic, routes, data schema, "
+                "user-provided copy, or API logic."
+            ),
         )
     )
     previews = [

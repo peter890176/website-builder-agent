@@ -24,7 +24,10 @@ class QualityReviewResponse(BaseModel):
 
 
 class DesignPolishRequest(BaseModel):
-    focus: str = "Improve visual hierarchy, spacing, responsiveness, accessibility, and polish."
+    focus: str = (
+        "Improve layout, spacing, alignment, typography, visual hierarchy, and responsive behavior. "
+        "Do not change business logic, routes, data schema, user-provided copy, or API logic."
+    )
 
 
 class DesignPolishResponse(ProjectEditPreviewResponse):
