@@ -37,7 +37,7 @@ from app.core.config import (
     get_openai_api_key,
 )
 
-from app.schemas.plan import ProjectPlan
+from app.schemas.plan import FilePlanItem, ProjectPlan
 
 from app.services.build import try_build_vite_project
 from app.services.runtime_smoke import run_runtime_smoke_test
@@ -92,7 +92,9 @@ Rules:
 
 - Always include src/App.tsx as the entry component
 
-- Put reusable UI in src/components/*.tsx
+- Always include src/components/ui.tsx and src/components/ui.css for the shared design-system primitives.
+
+- Put reusable UI in src/components/*.tsx and prefer importing primitives from src/components/ui.tsx.
 
 - Put structured data in src/data/*.json and import them in TSX; keep field names consistent across all files
 
@@ -100,7 +102,9 @@ Rules:
 
 - Do NOT plan binary downloads or external image URLs
 
-- List npm_dependencies when third-party UI/map/chart/icon libraries are required
+- List npm_dependencies when third-party UI/map/chart/icon libraries are required.
+
+- Include @radix-ui/react-slot when using the shared Button primitive.
 
 - Prefer a single-page layout unless the user explicitly asks for multiple routes
 
@@ -112,7 +116,328 @@ Rules:
 
 - Every relative import in the plan must have a matching file entry
 
+Design-system-first planning:
+
+- Plan pages as composed sections, not plain document-style content.
+- Default to a centered hero, centered section headers, max-width containers, responsive grids, and card-based content groups.
+- Prefer the shared Container, Section, SectionHeader, Button, Card, and Badge primitives instead of raw unstructured divs.
+- Avoid a full page of left-aligned text blocks unless the user explicitly asks for an editorial/document layout.
+
 """
+
+
+DESIGN_QUALITY_CONTRACT = """
+Design Quality Contract:
+
+- Build a polished, production-quality website, not a plain demo or document page.
+- Use the shared primitives from src/components/ui.tsx: Container, Section, SectionHeader, Button, Card, and Badge.
+- Use a centered hero by default, with a concise eyebrow/badge, strong headline, supporting copy, and clear CTA group.
+- Center section headers by default. Keep body copy readable with max-width text containers.
+- Wrap major content in max-width containers and use consistent section spacing.
+- Use responsive grids for cards and feature/content lists.
+- Keep cards, buttons, badges, typography, radius, colors, borders, and shadows consistent across the page.
+- Create clear visual hierarchy with contrast, whitespace, section backgrounds, and intentional grouping.
+- Avoid plain document-style, all-left-aligned pages. Do not stack long text blocks without visual structure.
+- Ensure desktop and mobile layouts are both intentional and avoid horizontal overflow in the generated site.
+"""
+
+
+UI_PRIMITIVES_TSX = '''import { Slot } from "@radix-ui/react-slot";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import "./ui.css";
+
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+type ContainerProps = ComponentPropsWithoutRef<"div"> & {
+  size?: "default" | "wide" | "narrow";
+};
+
+export function Container({ className, size = "default", ...props }: ContainerProps) {
+  return <div className={cx("ui-container", `ui-container--${size}`, className)} {...props} />;
+}
+
+type SectionProps = ComponentPropsWithoutRef<"section"> & {
+  tone?: "default" | "muted" | "accent" | "dark";
+};
+
+export function Section({ className, tone = "default", ...props }: SectionProps) {
+  return <section className={cx("ui-section", `ui-section--${tone}`, className)} {...props} />;
+}
+
+type SectionHeaderProps = ComponentPropsWithoutRef<"div"> & {
+  eyebrow?: string;
+  title: ReactNode;
+  description?: ReactNode;
+  align?: "center" | "left";
+};
+
+export function SectionHeader({
+  eyebrow,
+  title,
+  description,
+  align = "center",
+  className,
+  ...props
+}: SectionHeaderProps) {
+  return (
+    <div className={cx("ui-section-header", `ui-section-header--${align}`, className)} {...props}>
+      {eyebrow ? <Badge>{eyebrow}</Badge> : null}
+      <h2>{title}</h2>
+      {description ? <p>{description}</p> : null}
+    </div>
+  );
+}
+
+type ButtonProps = ComponentPropsWithoutRef<"button"> & {
+  asChild?: boolean;
+  variant?: "primary" | "secondary" | "ghost";
+  size?: "default" | "sm" | "lg";
+};
+
+export function Button({
+  asChild = false,
+  className,
+  variant = "primary",
+  size = "default",
+  ...props
+}: ButtonProps) {
+  const Comp = asChild ? Slot : "button";
+  return <Comp className={cx("ui-button", `ui-button--${variant}`, `ui-button--${size}`, className)} {...props} />;
+}
+
+type CardProps = ComponentPropsWithoutRef<"div"> & {
+  interactive?: boolean;
+};
+
+export function Card({ className, interactive = false, ...props }: CardProps) {
+  return <div className={cx("ui-card", interactive && "ui-card--interactive", className)} {...props} />;
+}
+
+export function Badge({ className, ...props }: ComponentPropsWithoutRef<"span">) {
+  return <span className={cx("ui-badge", className)} {...props} />;
+}
+'''
+
+
+UI_PRIMITIVES_CSS = """:root {
+  --ui-bg: #ffffff;
+  --ui-bg-muted: #f8fafc;
+  --ui-bg-accent: #eef2ff;
+  --ui-fg: #0f172a;
+  --ui-muted: #64748b;
+  --ui-border: rgba(15, 23, 42, 0.12);
+  --ui-primary: #4f46e5;
+  --ui-primary-strong: #4338ca;
+  --ui-primary-soft: rgba(79, 70, 229, 0.1);
+  --ui-radius: 1.25rem;
+  --ui-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.ui-container {
+  width: min(100% - 2rem, 72rem);
+  margin-inline: auto;
+}
+
+.ui-container--narrow {
+  width: min(100% - 2rem, 56rem);
+}
+
+.ui-container--wide {
+  width: min(100% - 2rem, 84rem);
+}
+
+.ui-section {
+  padding-block: clamp(4rem, 8vw, 7rem);
+}
+
+.ui-section--muted {
+  background: var(--ui-bg-muted);
+}
+
+.ui-section--accent {
+  background:
+    radial-gradient(circle at top left, rgba(79, 70, 229, 0.16), transparent 32rem),
+    var(--ui-bg-accent);
+}
+
+.ui-section--dark {
+  background: #0f172a;
+  color: white;
+}
+
+.ui-section-header {
+  max-width: 48rem;
+  margin: 0 auto clamp(2rem, 5vw, 4rem);
+}
+
+.ui-section-header--center {
+  text-align: center;
+}
+
+.ui-section-header--left {
+  margin-inline: 0;
+  text-align: left;
+}
+
+.ui-section-header h2 {
+  margin: 1rem 0 0;
+  font-size: clamp(2rem, 5vw, 3.75rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.ui-section-header p {
+  margin: 1rem auto 0;
+  max-width: 42rem;
+  color: var(--ui-muted);
+  font-size: clamp(1rem, 2vw, 1.18rem);
+  line-height: 1.75;
+}
+
+.ui-section--dark .ui-section-header p {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.ui-button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.75rem 1.15rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  cursor: pointer;
+}
+
+.ui-button:hover {
+  transform: translateY(-1px);
+}
+
+.ui-button--primary {
+  background: var(--ui-primary);
+  color: white;
+  box-shadow: 0 16px 36px rgba(79, 70, 229, 0.25);
+}
+
+.ui-button--primary:hover {
+  background: var(--ui-primary-strong);
+}
+
+.ui-button--secondary {
+  border-color: var(--ui-border);
+  background: white;
+  color: var(--ui-fg);
+}
+
+.ui-button--ghost {
+  background: transparent;
+  color: var(--ui-fg);
+}
+
+.ui-button--sm {
+  min-height: 2.25rem;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.9rem;
+}
+
+.ui-button--lg {
+  min-height: 3.25rem;
+  padding: 0.9rem 1.4rem;
+  font-size: 1.05rem;
+}
+
+.ui-card {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--ui-shadow);
+  padding: clamp(1.25rem, 3vw, 2rem);
+}
+
+.ui-card--interactive {
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.ui-card--interactive:hover {
+  transform: translateY(-4px);
+  border-color: rgba(79, 70, 229, 0.28);
+  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.12);
+}
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  border: 1px solid rgba(79, 70, 229, 0.18);
+  border-radius: 999px;
+  background: var(--ui-primary-soft);
+  color: var(--ui-primary-strong);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 720px) {
+  .ui-section {
+    padding-block: 3.5rem;
+  }
+
+  .ui-container,
+  .ui-container--narrow,
+  .ui-container--wide {
+    width: min(100% - 1.25rem, 100%);
+  }
+}
+"""
+
+
+DESIGN_SYSTEM_FILES = {
+    "src/components/ui.tsx": ("Shared Radix UI + CSS design-system primitives: Container, Section, SectionHeader, Button, Card, and Badge.", "tsx"),
+    "src/components/ui.css": ("Shared design-system CSS tokens and primitive styles for layout, cards, buttons, badges, typography, and spacing.", "css"),
+}
+
+
+RADIX_SLOT_PACKAGE = "@radix-ui/react-slot"
+FILE_VALIDATION_REPAIR_ATTEMPTS = 2
 
 
 
@@ -127,6 +452,10 @@ Rules:
   unless the `React` identifier is explicitly used in code.
 
 - You may import local files and npm packages listed in the plan.
+
+- For layout and repeated UI, import and use Container, Section, SectionHeader, Button, Card, and Badge from "./components/ui" or "../components/ui".
+
+- Prefer composing pages from those primitives instead of raw unstructured divs.
 
 - When importing JSON, use ONLY field paths that exist in the provided JSON content.
 
@@ -460,7 +789,19 @@ def _invoke_planner(message: str, error_context: str = "") -> ProjectPlan:
 
         raise ValueError("Plan must include src/App.tsx")
 
-    return plan
+    return _ensure_design_system_plan(plan)
+
+
+def _ensure_design_system_plan(plan: ProjectPlan) -> ProjectPlan:
+    planned_paths = {item.path.replace("\\", "/").lower() for item in plan.files}
+    files = list(plan.files)
+
+    for path, (description, file_type) in DESIGN_SYSTEM_FILES.items():
+        if path.lower() not in planned_paths:
+            files.append(FilePlanItem(path=path, description=description, file_type=file_type))
+
+    dependencies = merge_package_specs(plan.npm_dependencies, [RADIX_SLOT_PACKAGE])
+    return ProjectPlan(summary=plan.summary, files=files, npm_dependencies=dependencies)
 
 
 
@@ -545,6 +886,13 @@ def _generate_single_file(
     file_manifest: str,
 
 ) -> str:
+    normalized_item_path = item.path.replace("\\", "/")
+
+    if normalized_item_path == "src/components/ui.tsx":
+        return UI_PRIMITIVES_TSX
+
+    if normalized_item_path == "src/components/ui.css":
+        return UI_PRIMITIVES_CSS
 
     prior = "\n".join(f"{path} (already generated)" for path in generated.keys())
 
@@ -598,6 +946,8 @@ Requested npm packages:
 
 {data_context}
 
+{DESIGN_QUALITY_CONTRACT if item.file_type in {"tsx", "css"} else ""}
+
 {FILE_GENERATION_RULES}
 
 """
@@ -612,7 +962,7 @@ Requested npm packages:
 
         [
 
-            SystemMessage(content="You generate production-ready project files."),
+            SystemMessage(content="You generate production-ready project files using the project's shared design-system primitives."),
 
             HumanMessage(content=prompt),
 
@@ -620,13 +970,118 @@ Requested npm packages:
 
     )
 
-    content = clean_generated_content(str(response.content), item.file_type)
+    return _clean_or_repair_generated_file(
+        raw_content=str(response.content),
+        state=state,
+        plan=plan,
+        item=item,
+        generated=generated,
+        file_manifest=file_manifest,
+    )
 
-    if not is_valid_entry_tsx(item.path, content):
 
-        raise ValueError(f"{item.path} is not a valid App entry component")
+def _clean_or_repair_generated_file(
+    *,
+    raw_content: str,
+    state: AgentState,
+    plan: ProjectPlan,
+    item,
+    generated: dict[str, str],
+    file_manifest: str,
+) -> str:
+    current_raw = raw_content
+    last_error: Exception | None = None
 
-    return content
+    for attempt in range(FILE_VALIDATION_REPAIR_ATTEMPTS + 1):
+        try:
+            content = clean_generated_content(current_raw, item.file_type)
+            if not is_valid_entry_tsx(item.path, content):
+                raise ValueError(f"{item.path} is not a valid App entry component")
+            return content
+        except Exception as exc:
+            last_error = exc
+            if attempt >= FILE_VALIDATION_REPAIR_ATTEMPTS or not _is_repairable_generation_error(item):
+                raise
+            logger.info(
+                "Repairing invalid generated file %s after validation error: %s",
+                item.path,
+                exc,
+            )
+            current_raw = _repair_generated_file_content(
+                raw_content=current_raw,
+                validation_error=str(exc),
+                state=state,
+                plan=plan,
+                item=item,
+                generated=generated,
+                file_manifest=file_manifest,
+                attempt=attempt + 1,
+            )
+
+    if last_error:
+        raise last_error
+    raise ValueError(f"Failed to validate generated file: {item.path}")
+
+
+def _is_repairable_generation_error(item) -> bool:
+    normalized_path = item.path.replace("\\", "/").lower()
+    return item.file_type in {"json", "svg"} or normalized_path == "src/app.tsx"
+
+
+def _repair_generated_file_content(
+    *,
+    raw_content: str,
+    validation_error: str,
+    state: AgentState,
+    plan: ProjectPlan,
+    item,
+    generated: dict[str, str],
+    file_manifest: str,
+    attempt: int,
+) -> str:
+    prior = "\n".join(f"{path} (already generated)" for path in generated.keys())
+    format_rules = {
+        "json": "Return valid JSON only. Do not include markdown fences, comments, trailing commas, or unescaped quotes.",
+        "svg": "Return raw SVG XML only. It must contain one <svg> element and no markdown fences.",
+        "tsx": "Return valid TSX only. If this is src/App.tsx, define and export a default App component.",
+    }.get(item.file_type, "Return only the corrected file contents.")
+
+    response = _llm().invoke(
+        [
+            SystemMessage(content="You repair invalid generated file contents. Return only the corrected file contents."),
+            HumanMessage(
+                content=f"""Repair generated file: {item.path}
+Type: {item.file_type}
+Purpose: {item.description}
+Repair attempt: {attempt} of {FILE_VALIDATION_REPAIR_ATTEMPTS}
+
+Validation error:
+{validation_error}
+
+User request:
+{state["message"]}
+
+Project summary:
+{plan.summary}
+
+Project file manifest:
+{file_manifest}
+
+Already generated:
+{prior or "none"}
+
+Rules:
+- Preserve the intended meaning and data from the invalid output.
+- Fix only validity/format problems needed for this file to pass validation.
+- {format_rules}
+
+Invalid output:
+{raw_content}
+"""
+            ),
+        ]
+    )
+    return str(response.content)
 
 
 
@@ -1653,7 +2108,28 @@ def finalize(state: AgentState) -> dict:
     }
 
 
+def finalize_draft(state: AgentState) -> dict:
+    files = sorted(state.get("generated_files", {}).keys())
+    fix_attempts = state.get("fix_attempts", 0)
+    dep_attempts = state.get("dep_attempts", 0)
+    warnings = state.get("warnings", [])
 
+    reply = f"Generated {len(files)} draft files. Live preview updates first, and backend verification runs separately."
+    if fix_attempts or dep_attempts:
+        reply += " (auto-repaired"
+        if fix_attempts:
+            reply += f" {fix_attempts} times"
+        if dep_attempts:
+            reply += f", npm install retried {dep_attempts} times"
+        reply += ")"
+
+    return {
+        "files": files,
+        "reply": reply,
+        "build_log": state.get("build_log", ""),
+        "warnings": warnings,
+        "error": None,
+    }
 
 
 def mark_failure(state: AgentState) -> dict:
@@ -1889,7 +2365,51 @@ def build_website_edit_graph():
     return graph.compile()
 
 
+def build_website_draft_graph():
+    graph = StateGraph(AgentState)
+
+    graph.add_node("plan", plan_project)
+    graph.add_node("generate", generate_files)
+    graph.add_node("repair", repair_missing_imports)
+    graph.add_node("sync", sync_project)
+    graph.add_node("fix", fix_project)
+    graph.add_node("finalize", finalize_draft)
+    graph.add_node("mark_failure", mark_failure)
+
+    graph.add_edge(START, "plan")
+    graph.add_conditional_edges(
+        "plan",
+        lambda s: _route_if_pending(s, "generate"),
+        {"generate": "generate", "fix": "fix", "fail": "mark_failure"},
+    )
+    graph.add_conditional_edges(
+        "generate",
+        lambda s: _route_if_pending(s, "repair"),
+        {"repair": "repair", "fix": "fix", "fail": "mark_failure"},
+    )
+    graph.add_conditional_edges(
+        "repair",
+        lambda s: _route_if_pending(s, "sync"),
+        {"sync": "sync", "fix": "fix", "fail": "mark_failure"},
+    )
+    graph.add_conditional_edges(
+        "sync",
+        lambda s: _route_if_pending(s, "finalize"),
+        {"finalize": "finalize", "fix": "fix", "fail": "mark_failure"},
+    )
+    graph.add_conditional_edges(
+        "fix",
+        _route_after_fix,
+        {"plan": "plan", "generate": "generate", "repair": "repair", "sync": "sync", "fix": "fix", "fail": "mark_failure"},
+    )
+
+    graph.add_edge("finalize", END)
+    graph.add_edge("mark_failure", END)
+    return graph.compile()
+
+
 website_builder_graph = build_website_builder_graph()
 website_edit_graph = build_website_edit_graph()
+website_draft_graph = build_website_draft_graph()
 
 
