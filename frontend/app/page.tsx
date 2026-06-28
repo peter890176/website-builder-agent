@@ -18,25 +18,29 @@ import {
   deployProject,
   getProjectDiagnostics,
   listProjectFiles,
+  listProjects,
   previewProjectEdit,
   readProjectFile,
+  readProjectFiles,
   renameProjectFile,
   resolvePreviewUrl,
   runProjectBuild,
   runProjectVerify,
   saveProjectFile,
   sendChatDraft,
+  updateProject,
   type ChatResponse,
   type ChatMode,
   type DeploymentRecord,
   type ProjectDiagnosticsResponse,
   type ProjectEditPreviewContext,
   type ProjectEditPreviewResponse,
+  type ProjectSummary,
 } from "@/lib/api";
 import {
-  bootViteReactProject,
   deleteFileFromWebContainer,
   renameFileInWebContainer,
+  restoreDefaultWebContainerTemplate,
   writeFilesToWebContainer,
 } from "@/lib/webcontainer/runtime";
 
@@ -51,6 +55,8 @@ type FileTreeNode = {
   type: "file" | "folder";
   children: FileTreeNode[];
 };
+
+const ACTIVE_PROJECT_STORAGE_KEY = "website-builder-active-project";
 
 type MonacoEditorInstance = {
   addCommand: (keybinding: number, handler: () => void) => void;
@@ -830,6 +836,9 @@ function buildStructuredWebsitePrompt({
 
 export default function BuilderPage() {
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectListLoading, setProjectListLoading] = useState(false);
+  const [projectActionLoading, setProjectActionLoading] = useState(false);
   const [websiteType, setWebsiteType] = useState("");
   const [customWebsiteType, setCustomWebsiteType] = useState("");
   const [websiteFormat, setWebsiteFormat] = useState("");
@@ -909,17 +918,27 @@ export default function BuilderPage() {
   const [activeToolTab, setActiveToolTab] = useState<"problems" | "logs" | "terminal" | "jobs">("jobs");
   const [exportDeployOpen, setExportDeployOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameProjectName, setRenameProjectName] = useState("");
+  const [renameProjectError, setRenameProjectError] = useState<string | null>(null);
   const saveCurrentFileRef = useRef<() => void>(() => {});
   const monacoEditorRef = useRef<MonacoEditorInstance | null>(null);
-  const autoLiveProjectRef = useRef<string | null>(null);
+  const activeProjectIdRef = useRef<string | null>(null);
+  const autoLiveProjectRef = useRef<{ projectId: string; hasDraft: boolean } | null>(null);
+  const livePreviewRunRef = useRef(0);
   const lastAiPromptRef = useRef("");
+  const activeProject = useMemo(
+    () => projects.find((project) => project.project_id === projectId) ?? null,
+    [projectId, projects],
+  );
 
   const fileIsDirty = selectedFile !== null && fileContent !== savedFileContent;
   const activePreviewUrl = webPreviewUrl;
   const previewSource = webPreviewUrl ? "live" : "none";
   const verificationStatus = verifyLoading ? "verifying" : diagnostics?.status ?? "idle";
   const changedFiles = useMemo(() => result?.changed_files ?? [], [result?.changed_files]);
-  const hasProjectDraft = Boolean(result) || ["live_unverified", "verifying", "passed", "failed"].includes(diagnostics?.status ?? "");
+  const hasProjectDraft = Boolean(result) || Boolean(activeProject?.has_draft) || ["live_unverified", "verifying", "passed", "failed"].includes(diagnostics?.status ?? "");
+  const livePreviewStarting = webBooting && !webPreviewUrl;
   const canOpenBuiltPreview = Boolean(projectId && (hasProjectDraft || projectFiles.length > 0));
   const allGuidedSectionsOpen = GUIDED_SECTION_IDS.every((sectionId) => openBuilderSections.includes(sectionId));
   const filteredProjectFiles = useMemo(() => {
@@ -1096,24 +1115,122 @@ export default function BuilderPage() {
   const canRunPromptPreview = Boolean(promptPreview.trim()) && !promptPreviewDirty;
 
   useEffect(() => {
+    activeProjectIdRef.current = projectId;
+  }, [projectId]);
+
+  const resetProjectSession = useCallback(() => {
+    livePreviewRunRef.current += 1;
+    setResult(null);
+    setProjectFiles([]);
+    setSelectedFile(null);
+    setOpenFiles([]);
+    setFileSearch("");
+    setSelectedContextFiles([]);
+    setContextPanelOpen(false);
+    setContextSearch("");
+    setFileContent("");
+    setSavedFileContent("");
+    setSelectedEditorText("");
+    setSelectedEditorRange("");
+    setFileError(null);
+    setWebPreviewUrl(null);
+    setPreviewVersion((current) => current + 1);
+    setWebLogs([]);
+    setWebError(null);
+    setDiagnostics(null);
+    setDiagnosticsError(null);
+    setEditPreview(null);
+    setEditPreviewLoading(false);
+    setEditApplyLoading(false);
+    setEditPreviewError(null);
+    setEditAgentStatus("idle");
+    setBuiltPreviewLoading(false);
+    setBuiltPreviewError(null);
+    setPendingDeployIntent(null);
+    setVerifyLoading(false);
+    autoLiveProjectRef.current = null;
+  }, []);
+
+  const refreshProjectList = useCallback(async () => {
+    setProjectListLoading(true);
+    try {
+      const nextProjects = await listProjects();
+      setProjects(nextProjects);
+      return nextProjects;
+    } finally {
+      setProjectListLoading(false);
+    }
+  }, []);
+
+  const openProject = useCallback((nextProjectId: string) => {
+    if (nextProjectId === projectId) {
+      return;
+    }
+    resetProjectSession();
+    setProjectId(nextProjectId);
+    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, nextProjectId);
+  }, [projectId, resetProjectSession]);
+
+  const createAndOpenProject = useCallback(async () => {
+    setProjectActionLoading(true);
+    setError(null);
+    try {
+      const project = await createProject();
+      const nextProjects = await refreshProjectList();
+      setProjects(nextProjects);
+      resetProjectSession();
+      setProjectId(project.project_id);
+      window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, project.project_id);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to create project");
+    } finally {
+      setProjectActionLoading(false);
+    }
+  }, [refreshProjectList, resetProjectSession]);
+
+  useEffect(() => {
     let cancelled = false;
 
-    createProject()
-      .then((project) => {
-        if (!cancelled) {
-          setProjectId(project.project_id);
+    async function bootstrapProjects() {
+      setBootstrapping(true);
+      setError(null);
+      try {
+        const nextProjects = await listProjects();
+        if (cancelled) {
+          return;
         }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Unable to create project");
+        setProjects(nextProjects);
+
+        const storedProjectId = window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY);
+        const selectedProject = nextProjects.find((project) => project.project_id === storedProjectId) ?? nextProjects[0];
+        if (selectedProject) {
+          setProjectId(selectedProject.project_id);
+          window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, selectedProject.project_id);
+          return;
         }
-      })
-      .finally(() => {
+
+        const project = await createProject();
+        if (cancelled) {
+          return;
+        }
+        setProjectId(project.project_id);
+        window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, project.project_id);
+        const refreshedProjects = await listProjects();
+        if (!cancelled) {
+          setProjects(refreshedProjects);
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Unable to load projects");
+        }
+      } finally {
         if (!cancelled) {
           setBootstrapping(false);
         }
-      });
+      }
+    }
+
+    void bootstrapProjects();
 
     return () => {
       cancelled = true;
@@ -1146,30 +1263,43 @@ export default function BuilderPage() {
       return;
     }
 
+    const filesProjectId = projectId;
     try {
       setFileError(null);
-      const files = await listProjectFiles(projectId);
+      const files = await listProjectFiles(filesProjectId);
+      if (activeProjectIdRef.current !== filesProjectId) {
+        return;
+      }
       setProjectFiles(files);
+      await refreshProjectList();
     } catch (err: unknown) {
-      setFileError(err instanceof Error ? err.message : "Unable to load file list");
+      if (activeProjectIdRef.current === filesProjectId) {
+        setFileError(err instanceof Error ? err.message : "Unable to load file list");
+      }
     }
-  }, [projectId]);
+  }, [projectId, refreshProjectList]);
 
   const refreshDiagnostics = useCallback(async () => {
     if (!projectId) {
       return;
     }
 
+    const diagnosticsProjectId = projectId;
     try {
       setDiagnosticsError(null);
-      const nextDiagnostics = await getProjectDiagnostics(projectId);
+      const nextDiagnostics = await getProjectDiagnostics(diagnosticsProjectId);
+      if (activeProjectIdRef.current !== diagnosticsProjectId) {
+        return;
+      }
       setDiagnostics(nextDiagnostics);
       if (nextDiagnostics.status === "failed") {
         setActiveToolTab("problems");
       }
     } catch (err: unknown) {
-      setDiagnosticsError(err instanceof Error ? err.message : "Unable to load diagnostics");
-      setActiveToolTab("problems");
+      if (activeProjectIdRef.current === diagnosticsProjectId) {
+        setDiagnosticsError(err instanceof Error ? err.message : "Unable to load diagnostics");
+        setActiveToolTab("problems");
+      }
     }
   }, [projectId]);
 
@@ -1215,35 +1345,95 @@ export default function BuilderPage() {
   }
 
   const startLivePreview = useCallback(async () => {
+    if (!projectId) {
+      return;
+    }
+
+    const previewProjectId = projectId;
+    const previewHasDraft = hasProjectDraft;
+    const runId = livePreviewRunRef.current + 1;
+    livePreviewRunRef.current = runId;
+    const isCurrentRun = () => activeProjectIdRef.current === previewProjectId && livePreviewRunRef.current === runId;
+    const handleServerReady = (url: string) => {
+      if (isCurrentRun()) {
+        setWebPreviewUrl(url);
+      }
+    };
+    const handleServerRestart = () => {
+      if (isCurrentRun()) {
+        setWebPreviewUrl(null);
+      }
+    };
+    const appendWebLog = (line: string) => {
+      if (isCurrentRun()) {
+        setWebLogs((current) => [...current, normalizeTerminalLog(line)]);
+      }
+    };
+
     setWebBooting(true);
     setWebError(null);
     setWebLogs([]);
 
     try {
-      await bootViteReactProject({
-        onLog: (line) => setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
-        onServerReady: (url) => setWebPreviewUrl(url),
-      });
+      const projectFilesToSync = previewHasDraft ? await readProjectFiles(previewProjectId) : [];
+      if (!isCurrentRun()) {
+        return;
+      }
+
+      if (previewHasDraft && projectFilesToSync.length > 0) {
+        setProjectFiles(projectFilesToSync.map((file) => file.path).sort());
+        await writeFilesToWebContainer(projectFilesToSync, {
+          onLog: appendWebLog,
+          onServerReady: handleServerReady,
+          onServerRestart: handleServerRestart,
+          emitCachedServerReady: false,
+          restartAfterSync: true,
+          resetTemplateStyles: true,
+        });
+        if (isCurrentRun()) {
+          setPreviewVersion((current) => current + 1);
+        }
+      } else {
+        await restoreDefaultWebContainerTemplate({
+          onLog: appendWebLog,
+          onServerReady: handleServerReady,
+          onServerRestart: handleServerRestart,
+          emitCachedServerReady: false,
+        });
+      }
     } catch (err: unknown) {
-      setWebError(err instanceof Error ? err.message : "Live Preview failed to start");
+      if (isCurrentRun()) {
+        setWebError(err instanceof Error ? err.message : "Live Preview failed to start");
+      }
     } finally {
-      setWebBooting(false);
+      if (isCurrentRun()) {
+        setWebBooting(false);
+      }
     }
-  }, []);
+  }, [hasProjectDraft, projectId]);
 
   useEffect(() => {
-    if (!projectId || autoLiveProjectRef.current === projectId) {
+    if (!projectId) {
       return;
     }
-    autoLiveProjectRef.current = projectId;
+
+    const currentAutoLive = autoLiveProjectRef.current;
+    if (
+      currentAutoLive
+      && currentAutoLive.projectId === projectId
+      && currentAutoLive.hasDraft === hasProjectDraft
+    ) {
+      return;
+    }
+    autoLiveProjectRef.current = { projectId, hasDraft: hasProjectDraft };
     const timer = window.setTimeout(() => {
       void startLivePreview();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [projectId, startLivePreview]);
+  }, [hasProjectDraft, projectId, startLivePreview]);
 
   useEffect(() => {
-    if (!historyOpen && !exportDeployOpen) {
+    if (!historyOpen && !exportDeployOpen && !renameDialogOpen) {
       return;
     }
     const previousOverflow = document.body.style.overflow;
@@ -1251,7 +1441,7 @@ export default function BuilderPage() {
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [exportDeployOpen, historyOpen]);
+  }, [exportDeployOpen, historyOpen, renameDialogOpen]);
 
   const saveCurrentFile = useCallback(async () => {
     if (!projectId || !selectedFile) {
@@ -1271,6 +1461,7 @@ export default function BuilderPage() {
         {
           onLog: (line) => setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
           onServerReady: (url) => setWebPreviewUrl(url),
+          onServerRestart: () => setWebPreviewUrl(null),
         },
       );
       setPreviewVersion((current) => current + 1);
@@ -1442,6 +1633,7 @@ export default function BuilderPage() {
       await writeFilesToWebContainer([{ path: normalizedPath, content }], {
         onLog: (line) => setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
         onServerReady: (url) => setWebPreviewUrl(url),
+        onServerRestart: () => setWebPreviewUrl(null),
       });
       setPreviewVersion((current) => current + 1);
     } catch (err: unknown) {
@@ -1551,6 +1743,7 @@ export default function BuilderPage() {
       await writeFilesToWebContainer(response.changed_files, {
         onLog: (line) => setWebLogs((current) => [...current, normalizeTerminalLog(line)]),
         onServerReady: (url) => setWebPreviewUrl(url),
+        onServerRestart: () => setWebPreviewUrl(null),
         resetTemplateStyles: true,
       });
 
@@ -1601,6 +1794,58 @@ export default function BuilderPage() {
         ? []
         : GUIDED_SECTION_IDS,
     );
+  }
+
+  function handleProjectSelect(nextProjectId: string) {
+    if (!nextProjectId || nextProjectId === projectId) {
+      return;
+    }
+    if (fileIsDirty && !window.confirm("The current file has unsaved changes. Switch projects anyway?")) {
+      return;
+    }
+    openProject(nextProjectId);
+  }
+
+  function openRenameProjectDialog() {
+    if (!activeProject) {
+      return;
+    }
+    setRenameProjectName(activeProject.name);
+    setRenameProjectError(null);
+    setRenameDialogOpen(true);
+  }
+
+  async function submitRenameProject() {
+    if (!projectId || !activeProject) {
+      return;
+    }
+
+    const nextName = renameProjectName.trim();
+    if (!nextName) {
+      setRenameProjectError("Project name is required.");
+      return;
+    }
+    if (nextName === activeProject.name) {
+      setRenameDialogOpen(false);
+      return;
+    }
+
+    setProjectActionLoading(true);
+    setRenameProjectError(null);
+    setError(null);
+    try {
+      const updatedProject = await updateProject(projectId, nextName);
+      setProjects((current) =>
+        current
+          .map((project) => project.project_id === updatedProject.project_id ? updatedProject : project)
+          .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? "")),
+      );
+      setRenameDialogOpen(false);
+    } catch (err: unknown) {
+      setRenameProjectError(err instanceof Error ? err.message : "Unable to rename project");
+    } finally {
+      setProjectActionLoading(false);
+    }
   }
 
   function buildAiMessageWithGuidedBrief(message: string) {
@@ -1903,17 +2148,87 @@ export default function BuilderPage() {
   return (
     <div className="builder-dark min-h-full text-zinc-100">
       <div className="mx-auto flex min-h-full max-w-[1840px] flex-col gap-5 px-4 py-6 lg:flex-row">
-        <section className="flex w-full flex-col gap-4 lg:h-[calc(100vh-4rem)] lg:min-h-0 lg:w-[520px] lg:min-w-[360px] lg:max-w-[760px] lg:shrink-0 lg:resize-x lg:overflow-hidden">
+        <section className="flex w-full flex-col gap-4 lg:h-[calc(100vh-4rem)] lg:min-h-0 lg:w-[520px] lg:min-w-[360px] lg:max-w-[760px] lg:shrink-0 lg:resize-x lg:overflow-y-auto lg:pr-1">
           <div className="order-0 shrink-0">
-            <h1 className="text-2xl font-semibold tracking-tight text-white">
-              AI Website Builder
-            </h1>
-            <p className="mt-2 text-sm leading-6 text-zinc-400">
-              Describe the site. Refine only when needed.
-            </p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h1 className="text-2xl font-semibold tracking-tight text-white">
+                  AI Website Builder
+                </h1>
+                <p className="mt-2 text-sm leading-6 text-zinc-400">
+                  Describe the site. Refine only when needed.
+                </p>
+              </div>
+
+              <details className="group relative shrink-0">
+                <summary
+                  className="flex max-w-full list-none items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-xs font-medium text-zinc-200 shadow-sm transition hover:border-cyan-500/60 hover:bg-cyan-500/10 hover:text-cyan-100 sm:w-[220px] [&::-webkit-details-marker]:hidden"
+                  title={activeProject?.name ?? "Project"}
+                >
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    {activeProject?.name ?? "Project"}
+                  </span>
+                  <span className="text-zinc-500 group-open:rotate-180">v</span>
+                </summary>
+
+                <div className="absolute right-0 z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-zinc-800 bg-zinc-950 p-3 shadow-2xl">
+                  <div className="flex items-center justify-between gap-3">
+                    <label htmlFor="projectSwitcher" className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      Project
+                    </label>
+                    <span className="text-xs text-zinc-500">
+                      {projectListLoading ? "Refreshing..." : `${projects.length} project${projects.length === 1 ? "" : "s"}`}
+                    </span>
+                  </div>
+
+                  <select
+                    id="projectSwitcher"
+                    value={projectId ?? ""}
+                    onChange={(event) => handleProjectSelect(event.target.value)}
+                    disabled={bootstrapping || loading || projectActionLoading || projects.length === 0}
+                    className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-cyan-500/40 focus:ring-2 disabled:cursor-not-allowed disabled:text-zinc-500"
+                  >
+                    {projects.length === 0 ? (
+                      <option value="">No projects</option>
+                    ) : null}
+                    {projects.map((project) => (
+                      <option key={project.project_id} value={project.project_id}>
+                        {project.name} ({project.file_count})
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void createAndOpenProject()}
+                      disabled={bootstrapping || loading || projectActionLoading}
+                      className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-cyan-500/60 hover:bg-cyan-500/10 hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-zinc-600"
+                    >
+                      New
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openRenameProjectDialog}
+                      disabled={bootstrapping || loading || projectActionLoading || !activeProject}
+                      className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-cyan-500/60 hover:bg-cyan-500/10 hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-zinc-600"
+                    >
+                      Rename
+                    </button>
+                  </div>
+
+                  {activeProject ? (
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-500">
+                      <span>{activeProject.has_draft ? "Draft ready" : "Template"}</span>
+                      <span>{activeProject.file_count} editable files</span>
+                    </div>
+                  ) : null}
+                </div>
+              </details>
+            </div>
           </div>
 
-          <div className="order-1 min-h-0 flex-1 overflow-auto rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 text-sm shadow-sm backdrop-blur">
+          <div className="order-1 min-h-[220px] flex-1 overflow-auto rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 text-sm shadow-sm backdrop-blur">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="font-medium text-zinc-100">Guided fields</p>
@@ -2345,7 +2660,7 @@ export default function BuilderPage() {
           </div>
 
           {projectId ? (
-            <form onSubmit={handleEditSubmit} className="order-2 flex shrink-0 flex-col gap-3 rounded-2xl border border-cyan-500/25 bg-slate-950/90 p-4 shadow-sm backdrop-blur">
+            <form onSubmit={handleEditSubmit} className="order-2 flex shrink-0 flex-col gap-3 rounded-2xl border border-cyan-500/25 bg-slate-950/90 p-4 shadow-sm backdrop-blur lg:max-h-[72vh] lg:min-h-[320px] lg:overflow-y-auto">
               <div className="flex items-start justify-between gap-3">
                 <label htmlFor="aiPrompt" className="text-sm font-medium text-cyan-100">
                   Ask AI
@@ -2399,7 +2714,7 @@ export default function BuilderPage() {
                   setAiMessage(event.target.value);
                   setPendingDeployIntent(null);
                 }}
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none ring-cyan-400 focus:ring-2"
+                className="max-h-56 min-h-32 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none ring-cyan-400 focus:ring-2"
                 placeholder={
                   hasProjectDraft
                     ? "For example: research stronger CTA copy, update the Hero, then prepare a Diff Review"
@@ -2439,7 +2754,7 @@ export default function BuilderPage() {
                     value={promptPreview}
                     onChange={(event) => setPromptPreview(event.target.value)}
                     rows={7}
-                    className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-[11px] leading-5 text-zinc-800 outline-none ring-cyan-400 focus:ring-2"
+                    className="mt-3 max-h-56 w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-[11px] leading-5 text-zinc-800 outline-none ring-cyan-400 focus:ring-2"
                     disabled={loading || editPreviewLoading || editApplyLoading || deployIntentLoading}
                   />
                 </div>
@@ -2639,7 +2954,7 @@ export default function BuilderPage() {
                 </p>
               )}
 
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-col gap-2 border-t border-cyan-500/20 bg-slate-950/95 px-4 py-3 backdrop-blur sm:flex-row">
                 {hasProjectDraft ? (
                   <button
                   type="button"
@@ -3199,7 +3514,7 @@ export default function BuilderPage() {
                       activePreviewUrl && hasProjectDraft ? verificationStatusClass(verificationStatus) : "bg-zinc-100 text-zinc-500"
                     }`}
                   >
-                    {webPreviewUrl ? (hasProjectDraft ? "Live" : "Website not generated yet") : webBooting ? "Starting Live" : "No preview"}
+                    {webPreviewUrl ? (hasProjectDraft ? "Live" : "Website not generated yet") : livePreviewStarting ? "Starting Live" : "No preview"}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-zinc-500">
@@ -3261,7 +3576,7 @@ export default function BuilderPage() {
               </div>
             ) : (
               <div className="flex h-full min-h-[70vh] w-full items-center justify-center px-6 text-center text-sm text-zinc-500">
-                {webBooting ? "Preparing Live Preview..." : "Website not generated yet. Start with Ask AI to create a website preview."}
+                {livePreviewStarting ? "Starting Live Preview..." : "Website not generated yet. Start with Ask AI to create a website preview."}
               </div>
             )}
           </div>
@@ -3323,6 +3638,75 @@ export default function BuilderPage() {
               />
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {renameDialogOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex cursor-pointer items-center justify-center bg-zinc-950/90 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Rename project"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !projectActionLoading) {
+              setRenameDialogOpen(false);
+            }
+          }}
+        >
+          <form
+            className="builder-modal-panel w-full max-w-md cursor-default rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitRenameProject();
+            }}
+          >
+            <div className="border-b border-zinc-200 px-4 py-3">
+              <h2 className="text-sm font-semibold text-zinc-900">Rename Project</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                Choose a short name for the project switcher.
+              </p>
+            </div>
+
+            <div className="space-y-3 p-4">
+              <label className="block text-xs font-medium uppercase tracking-wide text-zinc-500" htmlFor="renameProjectName">
+                Project name
+              </label>
+              <input
+                id="renameProjectName"
+                value={renameProjectName}
+                onChange={(event) => {
+                  setRenameProjectName(event.target.value);
+                  setRenameProjectError(null);
+                }}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-cyan-500/40 focus:ring-2 disabled:cursor-not-allowed disabled:text-zinc-500"
+                disabled={projectActionLoading}
+                autoFocus
+              />
+              {renameProjectError ? (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {renameProjectError}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-zinc-200 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setRenameDialogOpen(false)}
+                disabled={projectActionLoading}
+                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={projectActionLoading || !renameProjectName.trim()}
+                className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-zinc-500"
+              >
+                {projectActionLoading ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
 

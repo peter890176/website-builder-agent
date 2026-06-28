@@ -1,3 +1,6 @@
+import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.config import WORKSPACE_DIR
@@ -17,6 +20,20 @@ IDE_ALLOWED_ROOT_FILES = {
     "vite.config.ts",
 }
 IDE_IGNORED_DIRS = {"dist", "node_modules", ".git"}
+PROJECT_METADATA_DIR = ".builder"
+PROJECT_METADATA_FILE = "project.json"
+STARTER_APP_MARKERS = (
+    "Website Builder Agent",
+    "Generated pages will replace this starter layout.",
+)
+STARTER_SOURCE_FILES = {
+    "public/vite.svg",
+    "src/App.css",
+    "src/App.tsx",
+    "src/index.css",
+    "src/main.tsx",
+    "src/vite-env.d.ts",
+}
 
 
 def ensure_workspace_root() -> Path:
@@ -25,13 +42,26 @@ def ensure_workspace_root() -> Path:
 
 
 def ensure_project_dir(project_id: str) -> Path:
-    safe_id = project_id.strip()
-    if not safe_id or ".." in safe_id or "/" in safe_id or "\\" in safe_id:
-        raise ValueError("Invalid project_id")
+    safe_id = _validate_project_id(project_id)
 
     project_dir = ensure_workspace_root() / safe_id
     project_dir.mkdir(parents=True, exist_ok=True)
     return project_dir
+
+
+def get_existing_project_dir(project_id: str) -> Path:
+    safe_id = _validate_project_id(project_id)
+    project_dir = ensure_workspace_root() / safe_id
+    if not project_dir.is_dir():
+        raise FileNotFoundError(project_id)
+    return project_dir
+
+
+def _validate_project_id(project_id: str) -> str:
+    safe_id = project_id.strip()
+    if not safe_id or ".." in safe_id or "/" in safe_id or "\\" in safe_id:
+        raise ValueError("Invalid project_id")
+    return safe_id
 
 
 def _validate_relative_path(relative_path: str) -> Path:
@@ -79,14 +109,16 @@ def _validate_ide_relative_path(relative_path: str) -> Path:
 
 def list_project_files(project_id: str) -> list[str]:
     project_dir = ensure_project_dir(project_id)
+    return list_editable_files_in_dir(project_dir)
+
+
+def list_editable_files_in_dir(project_dir: Path) -> list[str]:
     files: list[str] = []
 
-    for path in project_dir.rglob("*"):
+    for path in _walk_project_files(project_dir):
         if not path.is_file():
             continue
         relative = path.relative_to(project_dir)
-        if any(part in IDE_IGNORED_DIRS for part in relative.parts):
-            continue
         normalized = relative.as_posix()
         try:
             _validate_ide_relative_path(normalized)
@@ -95,6 +127,70 @@ def list_project_files(project_id: str) -> list[str]:
         files.append(normalized)
 
     return sorted(files)
+
+
+def read_project_files(project_id: str) -> list[dict[str, str]]:
+    project_dir = ensure_project_dir(project_id)
+    files: list[dict[str, str]] = []
+    for relative_path in list_editable_files_in_dir(project_dir):
+        try:
+            files.append({
+                "path": relative_path,
+                "content": (project_dir / relative_path).read_text(encoding="utf-8"),
+            })
+        except UnicodeDecodeError:
+            continue
+    return files
+
+
+def list_projects() -> list[dict]:
+    workspace_root = ensure_workspace_root()
+    projects: list[dict] = []
+
+    for project_dir in workspace_root.iterdir():
+        if not project_dir.is_dir() or project_dir.name in IDE_IGNORED_DIRS:
+            continue
+        if not _looks_like_project(project_dir):
+            continue
+        projects.append(project_summary(project_dir.name))
+
+    return sorted(projects, key=lambda project: project.get("updated_at") or "", reverse=True)
+
+
+def update_project(project_id: str, *, name: str) -> dict:
+    project_dir = get_existing_project_dir(project_id)
+    if not _looks_like_project(project_dir):
+        raise FileNotFoundError(project_id)
+    metadata = _read_project_metadata(project_dir)
+    metadata["name"] = _clean_project_name(name, fallback=project_id)
+    _write_project_metadata(project_dir, metadata)
+    return project_summary(project_id)
+
+
+def ensure_project_metadata(project_id: str, *, name: str | None = None) -> dict:
+    project_dir = ensure_project_dir(project_id)
+    metadata = _read_project_metadata(project_dir)
+    if name is not None:
+        metadata["name"] = _clean_project_name(name, fallback=project_id)
+    elif not metadata.get("name"):
+        metadata["name"] = _default_project_name(project_id)
+    _write_project_metadata(project_dir, metadata)
+    return metadata
+
+
+def project_summary(project_id: str) -> dict:
+    project_dir = ensure_project_dir(project_id)
+    metadata = _read_project_metadata(project_dir)
+    files = list_editable_files_in_dir(project_dir)
+    updated_at = _project_updated_at(project_dir)
+    return {
+        "project_id": project_id,
+        "name": _clean_project_name(str(metadata.get("name") or ""), fallback=_default_project_name(project_id)),
+        "workspace_path": str(project_dir),
+        "updated_at": updated_at.isoformat() if updated_at else None,
+        "file_count": len(files),
+        "has_draft": _has_draft(project_dir, files),
+    }
 
 
 def write_project_file(project_id: str, relative_path: str, content: str) -> Path:
@@ -187,3 +283,86 @@ def _remove_empty_parent_dirs(project_dir: Path, directory: Path) -> None:
 
 def get_dist_dir(project_id: str) -> Path:
     return ensure_project_dir(project_id) / "dist"
+
+
+def _looks_like_project(project_dir: Path) -> bool:
+    if (project_dir / PROJECT_METADATA_DIR / PROJECT_METADATA_FILE).is_file():
+        return True
+    if (project_dir / "package.json").is_file() and ((project_dir / "src").is_dir() or (project_dir / "index.html").is_file()):
+        return True
+    return False
+
+
+def _read_project_metadata(project_dir: Path) -> dict:
+    metadata_path = project_dir / PROJECT_METADATA_DIR / PROJECT_METADATA_FILE
+    if not metadata_path.is_file():
+        return {}
+    try:
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_project_metadata(project_dir: Path, metadata: dict) -> None:
+    metadata_dir = project_dir / PROJECT_METADATA_DIR
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = metadata_dir / PROJECT_METADATA_FILE
+    current = dict(metadata)
+    current["updated_at"] = datetime.now(timezone.utc).isoformat()
+    metadata_path.write_text(json.dumps(current, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _clean_project_name(name: str, *, fallback: str) -> str:
+    cleaned = " ".join(name.strip().split())
+    return cleaned[:120] if cleaned else fallback
+
+
+def _default_project_name(project_id: str) -> str:
+    return f"Project {project_id[:6]}"
+
+
+def _project_updated_at(project_dir: Path) -> datetime | None:
+    latest: datetime | None = None
+    for path in _walk_project_files(project_dir):
+        try:
+            modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        if latest is None or modified_at > latest:
+            latest = modified_at
+    return latest
+
+
+def _walk_project_files(project_dir: Path):
+    for root, dirnames, filenames in os.walk(project_dir):
+        dirnames[:] = [dirname for dirname in dirnames if dirname not in IDE_IGNORED_DIRS]
+        root_path = Path(root)
+        for filename in filenames:
+            yield root_path / filename
+
+
+def _has_draft(project_dir: Path, files: list[str]) -> bool:
+    source_files = [path for path in files if path.startswith(("src/", "public/"))]
+    if not source_files:
+        return False
+    app_path = project_dir / "src" / "App.tsx"
+    if app_path.is_file():
+        try:
+            app_content = app_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            app_content = ""
+        if all(marker in app_content for marker in STARTER_APP_MARKERS):
+            return any(path not in STARTER_SOURCE_FILES for path in source_files)
+
+    diagnostics_path = project_dir / ".builder" / "diagnostics.json"
+    if diagnostics_path.is_file():
+        try:
+            diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+            if diagnostics.get("status") in {"live_unverified", "verifying", "passed", "failed"}:
+                return True
+        except (json.JSONDecodeError, OSError, AttributeError):
+            pass
+    if (project_dir / "dist" / "index.html").is_file():
+        return True
+    return True

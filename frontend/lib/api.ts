@@ -6,6 +6,23 @@ export type ProjectCreateResponse = {
   workspace_path: string;
 };
 
+export type ProjectSummary = {
+  project_id: string;
+  name: string;
+  workspace_path: string;
+  updated_at: string | null;
+  file_count: number;
+  has_draft: boolean;
+};
+
+export type ProjectListResponse = {
+  projects: ProjectSummary[];
+};
+
+export type ProjectUpdateResponse = {
+  project: ProjectSummary;
+};
+
 export type ChatMode = "auto" | "generate" | "edit";
 
 export type ProjectWarning = {
@@ -43,6 +60,10 @@ export type ProjectFileListResponse = {
 export type ProjectFileContentResponse = {
   path: string;
   content: string;
+};
+
+export type ProjectFilesContentResponse = {
+  files: ProjectFileContentResponse[];
 };
 
 export type TypeScriptDiagnostic = {
@@ -270,6 +291,32 @@ export async function createProject(): Promise<ProjectCreateResponse> {
   return response.json() as Promise<ProjectCreateResponse>;
 }
 
+export async function listProjects(): Promise<ProjectSummary[]> {
+  const response = await fetch(`${API_URL}/api/projects`);
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  const data = (await response.json()) as ProjectListResponse;
+  return data.projects;
+}
+
+export async function updateProject(projectId: string, name: string): Promise<ProjectSummary> {
+  const response = await fetch(`${API_URL}/api/projects/${projectId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  const data = (await response.json()) as ProjectUpdateResponse;
+  return data.project;
+}
+
 export async function sendChat(
   projectId: string,
   message: string,
@@ -338,6 +385,17 @@ export async function readProjectFile(
   }
 
   return response.json() as Promise<ProjectFileContentResponse>;
+}
+
+export async function readProjectFiles(projectId: string): Promise<ProjectFileContentResponse[]> {
+  const response = await fetch(`${API_URL}/api/projects/${projectId}/files/contents`);
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  const data = (await response.json()) as ProjectFilesContentResponse;
+  return data.files;
 }
 
 export async function saveProjectFile(

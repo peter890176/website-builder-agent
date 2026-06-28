@@ -38,6 +38,7 @@ const runtimeState = globalThis.__websiteBuilderWebContainerState ??= {
 };
 
 const DEFAULT_TEMPLATE_STYLE_PATH = "src/style.css";
+const SERVER_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_TEMPLATE_STYLE_CONTENT = [
   "body {",
   "  margin: 0;",
@@ -115,12 +116,28 @@ export async function getWebContainer(): Promise<WebContainer> {
 export async function bootViteReactProject({
   onLog,
   onServerReady,
+  emitCachedServerReady = true,
 }: {
   onLog: (line: string) => void;
   onServerReady: (url: string) => void;
+  emitCachedServerReady?: boolean;
 }): Promise<WebContainer> {
   const webcontainer = await getWebContainer();
 
+  registerServerReadyListener(webcontainer, onServerReady, { emitCached: emitCachedServerReady });
+
+  await ensureProjectBooted(webcontainer, onLog);
+  await ensureDevServerRunning(webcontainer, onLog);
+  await waitForServerReady();
+
+  return webcontainer;
+}
+
+function registerServerReadyListener(
+  webcontainer: WebContainer,
+  onServerReady: ServerReadyListener,
+  { emitCached }: { emitCached: boolean },
+): void {
   runtimeState.serverReadyListeners.add(onServerReady);
   if (!runtimeState.serverReadyHandlerRegistered) {
     webcontainer.on("server-ready", (_port, url) => {
@@ -131,14 +148,9 @@ export async function bootViteReactProject({
     });
     runtimeState.serverReadyHandlerRegistered = true;
   }
-  if (runtimeState.lastServerUrl) {
+  if (emitCached && runtimeState.lastServerUrl) {
     onServerReady(runtimeState.lastServerUrl);
   }
-
-  await ensureProjectBooted(webcontainer, onLog);
-  await ensureDevServerRunning(webcontainer, onLog);
-
-  return webcontainer;
 }
 
 async function ensureProjectBooted(webcontainer: WebContainer, onLog: (line: string) => void): Promise<void> {
@@ -199,6 +211,27 @@ async function ensureDevServerRunning(webcontainer: WebContainer, onLog: (line: 
   }
 
   await runtimeState.devServerPromise;
+}
+
+function waitForServerReady(): Promise<void> {
+  if (runtimeState.lastServerUrl) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      runtimeState.serverReadyListeners.delete(listener);
+      reject(new Error("Timed out waiting for the Vite dev server to become ready."));
+    }, SERVER_READY_TIMEOUT_MS);
+
+    const listener: ServerReadyListener = () => {
+      window.clearTimeout(timer);
+      runtimeState.serverReadyListeners.delete(listener);
+      resolve();
+    };
+
+    runtimeState.serverReadyListeners.add(listener);
+  });
 }
 
 export type InteractiveCommand = {
@@ -276,11 +309,17 @@ export async function stopWebContainerDevServer(): Promise<void> {
 export async function restartWebContainerDevServer({
   onLog,
   onServerReady,
+  onServerRestart,
 }: {
   onLog: (line: string) => void;
   onServerReady: (url: string) => void;
+  onServerRestart?: () => void;
 }): Promise<void> {
-  const webcontainer = await bootViteReactProject({ onLog, onServerReady });
+  const webcontainer = await getWebContainer();
+  registerServerReadyListener(webcontainer, onServerReady, { emitCached: false });
+  await ensureProjectBooted(webcontainer, onLog);
+  runtimeState.lastServerUrl = null;
+  onServerRestart?.();
   await stopWebContainerDevServer();
   onLog("Restarting Vite dev server...\n");
   const process = await webcontainer.spawn("npm", ["run", "dev"]);
@@ -293,6 +332,24 @@ export async function restartWebContainerDevServer({
       runtimeState.devServerPromise = null;
     }
   });
+  await waitForServerReady();
+}
+
+export async function restoreDefaultWebContainerTemplate({
+  onLog,
+  onServerReady,
+  onServerRestart,
+  emitCachedServerReady = true,
+}: {
+  onLog: (line: string) => void;
+  onServerReady: (url: string) => void;
+  onServerRestart?: () => void;
+  emitCachedServerReady?: boolean;
+}): Promise<void> {
+  const webcontainer = await bootViteReactProject({ onLog, onServerReady, emitCachedServerReady });
+  onLog("Restoring default Vite React template...\n");
+  await webcontainer.mount(viteReactTemplate);
+  await restartWebContainerDevServer({ onLog, onServerReady, onServerRestart });
 }
 
 export async function writeFilesToWebContainer(
@@ -300,10 +357,16 @@ export async function writeFilesToWebContainer(
   {
     onLog,
     onServerReady,
+    onServerRestart,
+    emitCachedServerReady = true,
+    restartAfterSync = false,
     resetTemplateStyles = false,
   }: {
     onLog: (line: string) => void;
     onServerReady: (url: string) => void;
+    onServerRestart?: () => void;
+    emitCachedServerReady?: boolean;
+    restartAfterSync?: boolean;
     resetTemplateStyles?: boolean;
   },
 ): Promise<void> {
@@ -311,7 +374,7 @@ export async function writeFilesToWebContainer(
     return;
   }
 
-  const webcontainer = await bootViteReactProject({ onLog, onServerReady });
+  const webcontainer = await bootViteReactProject({ onLog, onServerReady, emitCachedServerReady });
   const shouldInstall = files.some((file) => normalizePath(file.path) === "package.json");
   const incomingPaths = new Set(files.map((file) => normalizePath(file.path)));
 
@@ -340,6 +403,10 @@ export async function writeFilesToWebContainer(
     if (installExitCode !== 0) {
       throw new Error(`npm install failed with exit code ${installExitCode}`);
     }
+  }
+
+  if (restartAfterSync || shouldInstall) {
+    await restartWebContainerDevServer({ onLog, onServerReady, onServerRestart });
   }
 }
 

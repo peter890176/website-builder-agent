@@ -33,10 +33,14 @@ from app.schemas.project_file import (
     ProjectFileContentResponse,
     ProjectFileDeleteResponse,
     ProjectFileListResponse,
+    ProjectFilesContentResponse,
+    ProjectListResponse,
     ProjectFileRenameRequest,
     ProjectFileRenameResponse,
     ProjectFileSaveRequest,
     ProjectFileSaveResponse,
+    ProjectUpdateRequest,
+    ProjectUpdateResponse,
 )
 from app.services.build import normalize_react_default_imports, try_build_vite_project
 from app.services.build_fix import collect_project_sources, request_project_fix
@@ -52,11 +56,15 @@ from app.services.scaffold import copy_vite_template, ensure_npm_dependencies, s
 from app.services.workspace import (
     create_editable_project_file,
     delete_editable_project_file,
+    ensure_project_metadata,
     ensure_project_dir,
     get_dist_dir,
     list_project_files,
+    list_projects,
     read_editable_project_file,
+    read_project_files,
     rename_editable_project_file,
+    update_project,
     write_editable_project_file,
     write_project_file,
 )
@@ -67,12 +75,18 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 VERIFY_REPAIR_ATTEMPTS = MAX_BUILD_FIX_ATTEMPTS
 
 
+@router.get("", response_model=ProjectListResponse)
+def get_projects() -> ProjectListResponse:
+    return ProjectListResponse(projects=list_projects())
+
+
 @router.post("", response_model=ProjectCreateResponse)
 def create_project(background_tasks: BackgroundTasks) -> ProjectCreateResponse:
     project_id = uuid.uuid4().hex[:12]
 
     try:
         project_dir = copy_vite_template(project_id)
+        ensure_project_metadata(project_id)
         background_tasks.add_task(ensure_npm_dependencies, project_dir)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -83,6 +97,17 @@ def create_project(background_tasks: BackgroundTasks) -> ProjectCreateResponse:
         project_id=project_id,
         workspace_path=str(project_dir),
     )
+
+
+@router.patch("/{project_id}", response_model=ProjectUpdateResponse)
+def patch_project(project_id: str, body: ProjectUpdateRequest) -> ProjectUpdateResponse:
+    try:
+        summary = update_project(project_id, name=body.name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Project not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProjectUpdateResponse(project=summary)
 
 
 @router.post("/{project_id}/chat", response_model=ChatResponse)
@@ -505,6 +530,15 @@ def get_project_files(project_id: str) -> ProjectFileListResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return ProjectFileListResponse(files=files)
+
+
+@router.get("/{project_id}/files/contents", response_model=ProjectFilesContentResponse)
+def get_project_files_content(project_id: str) -> ProjectFilesContentResponse:
+    try:
+        files = read_project_files(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProjectFilesContentResponse(files=files)
 
 
 @router.get("/{project_id}/files/content", response_model=ProjectFileContentResponse)
