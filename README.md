@@ -1,71 +1,137 @@
-﻿# website-builder-agent
+# website-builder-agent
 
-Full-stack website builder agent project with a Next.js frontend, FastAPI backend, and LangGraph / LangChain / OpenAI agent capabilities.
+AI-powered website builder and browser-based IDE for generating, editing, verifying, and exporting Vite React websites.
 
-## Project Overview
+This project is a full-stack AI agent application. Users describe the website they want, review a generated file plan, preview the result in a live WebContainer environment, edit files in Monaco, run backend verification, and export or deploy the finished project.
 
-`website-builder-agent` helps build and iterate websites with AI agent workflows. It includes a working frontend app, backend API, project workspace persistence, WebContainer live preview, and verification/deployment foundations.
+## Highlights
 
-## Architecture
+- **Agentic website generation**: LangGraph workflow plans files, generates code, repairs missing imports, syncs sources, runs production builds, performs runtime smoke checks, and attempts targeted fixes.
+- **Live browser IDE**: Next.js app with Monaco Editor, file tree management, WebContainer live preview, terminal history, and project switching.
+- **Diff-based AI editing**: Existing projects can be edited through preview/apply flows with change-size classification and large-change confirmation.
+- **Verification loop**: Backend build and runtime diagnostics capture TypeScript errors, runtime errors, warnings, changed files, and repair notes.
+- **Project lifecycle tools**: Snapshot history, restore, compare, ZIP export, GitHub export, and verification-gated deploy actions.
+- **Portfolio-ready architecture**: Separate frontend, backend, generated workspace, Vite template, schemas, services, and agent graph modules.
+
+## Tech Stack
 
 | Layer | Technology |
-|------|------|
-| Frontend | Next.js App Router, TypeScript, Tailwind CSS |
-| Backend | FastAPI, Uvicorn |
-| Agent | LangGraph, LangChain, `langchain-openai` with OpenAI API configuration |
+| --- | --- |
+| Frontend | Next.js App Router, React, TypeScript, Tailwind CSS, Radix UI |
+| Editor and preview | Monaco Editor, WebContainer API, xterm.js |
+| Backend | FastAPI, Pydantic, Uvicorn |
+| AI agent | LangGraph, LangChain, OpenAI |
+| Generated apps | Vite, React, TypeScript |
+| Verification | Vite production build, TypeScript diagnostics, Playwright runtime smoke tests |
+| Export and deploy | ZIP export, GitHub API, Vercel, Netlify, Cloudflare Pages |
 
-## Folder Structure
+## Product Flow
 
+```mermaid
+flowchart LR
+    A["User prompt"] --> B["Project plan"]
+    B --> C["Generate files"]
+    C --> D["Repair imports and normalize assets"]
+    D --> E["Sync workspace"]
+    E --> F["Live WebContainer preview"]
+    E --> G["Backend verification"]
+    G --> H{"Build/runtime passed?"}
+    H -- "No" --> I["AI repair loop"]
+    I --> G
+    H -- "Yes" --> J["Snapshot, export, or deploy"]
 ```
+
+## Repository Structure
+
+```text
 website-builder-agent/
-├── README.md           # Project documentation
-├── .gitignore
-├── workspace/          # Generated Vite projects; do not commit
-├── frontend/           # Next.js app
-│   ├── app/
-│   ├── package.json
-│   └── ...
-└── backend/
-    ├── .gitignore
-    ├── .venv/          # Python virtual environment; do not commit
-    ├── requirements.txt
-    └── app/
-        ├── __init__.py
-        └── main.py     # FastAPI entry point
+|-- README.md
+|-- docs/
+|   `-- architecture.md
+|-- frontend/                 # Next.js app and browser IDE
+|   |-- app/
+|   |-- components/
+|   `-- lib/
+|-- backend/                  # FastAPI API, agent workflows, services, schemas
+|   |-- app/
+|   |   |-- agents/
+|   |   |-- api/routes/
+|   |   |-- schemas/
+|   |   `-- services/
+|   |-- templates/
+|   |   `-- vite-react-ts/
+|   `-- tests/
+`-- workspace/                # Generated projects, ignored by git
 ```
 
-## Run Frontend
+## Getting Started
 
-```bash
-cd frontend
-npm run dev
-```
-
-Default dev server: http://localhost:3000
-
-## Run Backend
-
-In Windows PowerShell:
+### 1. Backend
 
 ```powershell
 cd backend
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-`workspace/` lives at the repository root so `--reload` does not restart repeatedly when `node_modules` changes.
+Backend API docs are available at http://127.0.0.1:8000/docs.
 
-API docs: http://127.0.0.1:8000/docs  
-Root route example: `GET /` returns a JSON greeting.
+### 2. Frontend
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend dev server: http://localhost:3000
 
 ## Environment Variables
 
-Set the following variable for OpenAI-powered features:
+Create `backend/.env` for local secrets:
 
-- `OPENAI_API_KEY`: OpenAI API key
+```env
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.4-mini
+OPENAI_FIX_MODEL=gpt-5.3-codex
+APP_BASE_URL=http://127.0.0.1:8000
 
-Recommended location: `backend/.env`. This file is ignored by git and must not be committed. You can also configure the key through system environment variables.
+GITHUB_TOKEN=...
+VERCEL_TOKEN=...
+NETLIFY_TOKEN=...
+CLOUDFLARE_API_TOKEN=...
+CLOUDFLARE_ACCOUNT_ID=...
+```
 
-## License and Contributing
+Only `OPENAI_API_KEY` is required for AI generation and editing. Deployment variables are optional and only needed for the matching provider.
 
-Add license and contribution guidelines according to project requirements.
+## Verification
+
+Frontend:
+
+```powershell
+cd frontend
+npm run lint
+npm run build
+```
+
+Backend:
+
+```powershell
+cd backend
+pip install -r requirements.txt
+python -m pytest
+```
+
+## Resume Summary
+
+Built a full-stack AI website builder with Next.js, FastAPI, LangGraph, OpenAI, Monaco Editor, and WebContainer live preview. Designed an agent workflow that plans, generates, verifies, and auto-repairs Vite React projects using TypeScript, build, and runtime diagnostics. Added project persistence, version snapshots, diff-based AI edits, export/deploy integrations, and verification-gated deployment.
+
+## Current Limitations
+
+- The frontend app currently contains a large top-level page component; splitting it into focused panels and hooks would improve maintainability.
+- Automated backend coverage is still early and should be expanded around workspace safety, agent repair validation, diagnostics parsing, and deploy providers.
+- AI generation quality depends on configured model behavior and available OpenAI API access.
+- Deploy integrations require provider tokens and have not been abstracted behind a mockable provider interface yet.

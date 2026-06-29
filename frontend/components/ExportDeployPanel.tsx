@@ -117,7 +117,7 @@ export function ExportDeployPanel({ projectId, diagnostics, chrome = true }: Exp
           <div className="space-y-2">
             {deployments.slice(0, 8).map((deployment) => (
               <div key={deployment.id} className="rounded-lg border border-zinc-200 px-3 py-2 text-xs">
-                <p className="font-medium text-zinc-800">{deployment.provider} · {deployment.status}</p>
+                <p className="font-medium text-zinc-800">{deployment.provider} / {deployment.status}</p>
                 <p className="mt-1 text-zinc-500">{deployment.message}</p>
                 {deployment.url ? <a href={deployment.url} target="_blank" rel="noreferrer" className="mt-1 block text-violet-700 underline">{deployment.url}</a> : null}
               </div>
