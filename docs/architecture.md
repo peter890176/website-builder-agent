@@ -120,7 +120,7 @@ flowchart LR
 
 ### Draft Graph
 
-The draft graph favors fast live preview. It plans, generates, repairs imports, and syncs files, but skips production build and runtime smoke validation until the user runs backend verification.
+The draft graph powers new-site requests through `POST /api/projects/{project_id}/chat/draft`. It favors fast live preview by planning, generating, repairing imports, and syncing files, but skips production build and runtime smoke validation until the user runs backend verification. Draft edits still use the edit-draft patch path because they start from existing project files and need diff-oriented patch handling.
 
 ```mermaid
 flowchart LR

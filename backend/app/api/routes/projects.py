@@ -6,11 +6,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 
 from app.agents.graph import (
-    generate_files,
-    plan_project,
-    repair_missing_imports,
-    sync_project,
     website_builder_graph,
+    website_draft_graph,
     website_edit_graph,
 )
 from app.agents.imports import normalize_generated_files, normalize_posix_path
@@ -469,25 +466,22 @@ def _apply_verify_repair(project_id: str, project_dir, build_log: str, attempt: 
 
 
 def _run_generate_draft(project_id: str, message: str, project_dir, job_id: str | None = None) -> AgentState:
-    state = _initial_state(message, project_id, project_dir)
-    stages = [
-        ("Planning project files", plan_project, 20),
-        ("Generating project files", generate_files, 55),
-        ("Repairing missing imports", repair_missing_imports, 68),
-        ("Syncing files to workspace", sync_project, 75),
-    ]
+    if job_id:
+        append_job_log(project_id, job_id, "Running LangGraph draft workflow")
+        update_job(project_id, job_id, progress=20)
 
-    for label, node, progress in stages:
-        if job_id:
-            append_job_log(project_id, job_id, label)
-            update_job(project_id, job_id, progress=progress)
-        state = {**state, **node(state)}
-        _raise_if_draft_blocked(state)
+    result = website_draft_graph.invoke(
+        _initial_state(message, project_id, project_dir),
+        config={"recursion_limit": 80},
+    )
+    if result.get("error"):
+        raise RuntimeError(result["error"])
 
-    return {
-        **state,
-        "reply": f"Generated {len(state.get('generated_files', {}))} draft files. Live preview updates first, and backend verification runs separately.",
-    }
+    if job_id:
+        append_job_log(project_id, job_id, "LangGraph draft workflow completed")
+        update_job(project_id, job_id, progress=75)
+
+    return result
 
 
 def _run_edit_draft(project_id: str, message: str, project_dir, job_id: str | None = None) -> AgentState:
@@ -512,14 +506,6 @@ def _run_edit_draft(project_id: str, message: str, project_dir, job_id: str | No
         "reply": edit.notes or "Generated draft changes.",
         "warnings": edit.warnings,
     }
-
-
-def _raise_if_draft_blocked(state: AgentState) -> None:
-    if state.get("error"):
-        raise RuntimeError(state["error"])
-    if state.get("pending_error"):
-        stage = state.get("failure_stage") or "draft"
-        raise RuntimeError(f"Draft stopped at stage '{stage}': {state['pending_error']}")
 
 
 @router.get("/{project_id}/files", response_model=ProjectFileListResponse)
