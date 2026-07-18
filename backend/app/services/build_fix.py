@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 from app.core.config import MAX_BUILD_FIX_ATTEMPTS, OPENAI_FIX_MODEL, get_openai_api_key
 from app.schemas.build_fix import BuildFixResult
 from app.services.dependencies import merge_package_specs, npm_registry_context
+from app.services.ui_contract import UI_COMPONENT_CONTRACT, ui_contract_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,9 @@ When fixing TypeScript/Vite/ESLint build errors:
   Change the failing line context, patch the source/data/type it depends on, or change the package version.
 - IntrinsicAttributes errors mean the JSX call site passes props the component does not declare:
   remove those props in the parent file OR add a props interface to the child.
+- For shared UI primitive errors, first group all failing call sites by Badge, Button, or SectionHeader
+  and apply the shared UI contract. Do not patch each page independently when one contract mismatch
+  explains the errors.
 - If a child component already imports src/data/*.json internally, the parent should use `<Child />` with no data props.
 - When a TypeScript error involves a third-party package, use TypeScript/package diagnostics:
   inspect the imported symbol, installed package metadata, bundled type fields,
@@ -168,6 +172,7 @@ def request_project_fix(
     manifest = "\n\n".join(
         f"### {path}\n{content[:5000]}" for path, content in sorted(sources.items())
     )
+    ui_diagnostics = ui_contract_diagnostics(sources, build_log or error_message)
     package_json_text, _package_json = _read_package_json(project_dir)
 
     llm = ChatOpenAI(model=OPENAI_FIX_MODEL, api_key=api_key, temperature=0.1)
@@ -226,6 +231,8 @@ def request_project_fix(
                     f"Build debug context:\n{build_debug_context or 'none'}\n\n"
                     f"Browser runtime diagnostics:\n{runtime_diagnostics or 'none'}\n\n"
                     f"TypeScript error hints:\n{tsc_hints or 'none'}\n\n"
+                    f"Shared UI contract:\n{UI_COMPONENT_CONTRACT}\n\n"
+                    f"Shared UI analysis:\n{ui_diagnostics}\n\n"
                     f"Latest error:\n{error_message}\n\n"
                     f"Full build log:\n{build_log or 'none'}\n\n"
                     f"Current project files:\n{manifest}"

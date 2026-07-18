@@ -65,6 +65,7 @@ from app.agents.truthfulness import (
     warning_dicts,
 )
 from app.services.build_fix import request_project_fix
+from app.services.ui_contract import UI_COMPONENT_CONTRACT
 
 from app.services.dependencies import install_planned_dependencies, merge_package_specs, validate_package_specs
 
@@ -192,7 +193,8 @@ export function SectionHeader({
 
 type ButtonProps = ComponentPropsWithoutRef<"button"> & {
   asChild?: boolean;
-  variant?: "primary" | "secondary" | "ghost";
+  href?: string;
+  variant?: "primary" | "secondary" | "outline" | "ghost";
   size?: "default" | "sm" | "lg";
 };
 
@@ -201,8 +203,12 @@ export function Button({
   className,
   variant = "primary",
   size = "default",
+  href,
   ...props
 }: ButtonProps) {
+  if (href && !asChild) {
+    return <a href={href} className={cx("ui-button", `ui-button--${variant}`, `ui-button--${size}`, className)}>{props.children}</a>;
+  }
   const Comp = asChild ? Slot : "button";
   return <Comp className={cx("ui-button", `ui-button--${variant}`, `ui-button--${size}`, className)} {...props} />;
 }
@@ -215,8 +221,12 @@ export function Card({ className, interactive = false, ...props }: CardProps) {
   return <div className={cx("ui-card", interactive && "ui-card--interactive", className)} {...props} />;
 }
 
-export function Badge({ className, ...props }: ComponentPropsWithoutRef<"span">) {
-  return <span className={cx("ui-badge", className)} {...props} />;
+type BadgeProps = ComponentPropsWithoutRef<"span"> & {
+  variant?: "default" | "primary" | "success" | "warning";
+};
+
+export function Badge({ className, variant = "default", ...props }: BadgeProps) {
+  return <span className={cx("ui-badge", `ui-badge--${variant}`, className)} {...props} />;
 }
 '''
 
@@ -370,6 +380,12 @@ select {
   color: var(--ui-fg);
 }
 
+.ui-button--outline {
+  border-color: currentColor;
+  background: transparent;
+  color: var(--ui-primary);
+}
+
 .ui-button--sm {
   min-height: 2.25rem;
   padding: 0.5rem 0.85rem;
@@ -416,6 +432,10 @@ select {
   text-transform: uppercase;
 }
 
+.ui-badge--primary { background: var(--ui-primary-soft); color: var(--ui-primary-strong); }
+.ui-badge--success { background: #dcfce7; color: #166534; }
+.ui-badge--warning { background: #fef3c7; color: #92400e; }
+
 @media (max-width: 720px) {
   .ui-section {
     padding-block: 3.5rem;
@@ -456,6 +476,8 @@ Rules:
 - For layout and repeated UI, import and use Container, Section, SectionHeader, Button, Card, and Badge from "./components/ui" or "../components/ui".
 
 - Prefer composing pages from those primitives instead of raw unstructured divs.
+
+""" + UI_COMPONENT_CONTRACT + """
 
 - When importing JSON, use ONLY field paths that exist in the provided JSON content.
 
