@@ -154,7 +154,11 @@ def list_projects() -> list[dict]:
             continue
         projects.append(project_summary(project_dir.name))
 
-    return sorted(projects, key=lambda project: project.get("updated_at") or "", reverse=True)
+    return sorted(
+        projects,
+        key=lambda project: (project.get("created_at") or "", project["project_id"]),
+        reverse=True,
+    )
 
 
 def update_project(project_id: str, *, name: str) -> dict:
@@ -174,6 +178,18 @@ def ensure_project_metadata(project_id: str, *, name: str | None = None) -> dict
         metadata["name"] = _clean_project_name(name, fallback=project_id)
     elif not metadata.get("name"):
         metadata["name"] = _default_project_name(project_id)
+    if not metadata.get("created_at"):
+        metadata["created_at"] = _project_created_at(project_dir).isoformat()
+    _write_project_metadata(project_dir, metadata)
+    return metadata
+
+
+def set_project_site_state(project_id: str, site_state: str) -> dict:
+    if site_state not in {"new", "ready"}:
+        raise ValueError("Unsupported project site state")
+    project_dir = ensure_project_dir(project_id)
+    metadata = _read_project_metadata(project_dir)
+    metadata["site_state"] = site_state
     _write_project_metadata(project_dir, metadata)
     return metadata
 
@@ -183,13 +199,23 @@ def project_summary(project_id: str) -> dict:
     metadata = _read_project_metadata(project_dir)
     files = list_editable_files_in_dir(project_dir)
     updated_at = _project_updated_at(project_dir)
+    created_at = _project_created_at(project_dir)
+    has_draft = _has_draft(project_dir, files)
+    site_state = metadata.get("site_state")
+    if site_state not in {"new", "ready"}:
+        # Existing projects predate the explicit lifecycle field. Preserve
+        # their visible starter screen until an AI result explicitly marks
+        # them ready.
+        site_state = "new" if _is_starter_layout(project_dir) else "ready"
     return {
         "project_id": project_id,
         "name": _clean_project_name(str(metadata.get("name") or ""), fallback=_default_project_name(project_id)),
         "workspace_path": str(project_dir),
+        "created_at": str(metadata.get("created_at") or created_at.isoformat()),
         "updated_at": updated_at.isoformat() if updated_at else None,
         "file_count": len(files),
-        "has_draft": _has_draft(project_dir, files),
+        "has_draft": has_draft,
+        "site_state": site_state,
     }
 
 
@@ -334,6 +360,13 @@ def _project_updated_at(project_dir: Path) -> datetime | None:
     return latest
 
 
+def _project_created_at(project_dir: Path) -> datetime:
+    try:
+        return datetime.fromtimestamp(project_dir.stat().st_ctime, tz=timezone.utc)
+    except OSError:
+        return datetime.now(timezone.utc)
+
+
 def _walk_project_files(project_dir: Path):
     for root, dirnames, filenames in os.walk(project_dir):
         dirnames[:] = [dirname for dirname in dirnames if dirname not in IDE_IGNORED_DIRS]
@@ -346,14 +379,8 @@ def _has_draft(project_dir: Path, files: list[str]) -> bool:
     source_files = [path for path in files if path.startswith(("src/", "public/"))]
     if not source_files:
         return False
-    app_path = project_dir / "src" / "App.tsx"
-    if app_path.is_file():
-        try:
-            app_content = app_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            app_content = ""
-        if all(marker in app_content for marker in STARTER_APP_MARKERS):
-            return any(path not in STARTER_SOURCE_FILES for path in source_files)
+    if _is_starter_layout(project_dir):
+        return any(path not in STARTER_SOURCE_FILES for path in source_files)
 
     diagnostics_path = project_dir / ".builder" / "diagnostics.json"
     if diagnostics_path.is_file():
@@ -366,3 +393,14 @@ def _has_draft(project_dir: Path, files: list[str]) -> bool:
     if (project_dir / "dist" / "index.html").is_file():
         return True
     return True
+
+
+def _is_starter_layout(project_dir: Path) -> bool:
+    app_path = project_dir / "src" / "App.tsx"
+    if not app_path.is_file():
+        return False
+    try:
+        app_content = app_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return False
+    return all(marker in app_content for marker in STARTER_APP_MARKERS)

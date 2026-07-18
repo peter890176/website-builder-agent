@@ -10,9 +10,11 @@ export type ProjectSummary = {
   project_id: string;
   name: string;
   workspace_path: string;
+  created_at: string | null;
   updated_at: string | null;
   file_count: number;
   has_draft: boolean;
+  site_state: "new" | "ready";
 };
 
 export type ProjectListResponse = {

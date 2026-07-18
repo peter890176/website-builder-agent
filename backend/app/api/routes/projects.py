@@ -61,6 +61,7 @@ from app.services.workspace import (
     read_editable_project_file,
     read_project_files,
     rename_editable_project_file,
+    set_project_site_state,
     update_project,
     write_editable_project_file,
     write_project_file,
@@ -84,6 +85,7 @@ def create_project(background_tasks: BackgroundTasks) -> ProjectCreateResponse:
     try:
         project_dir = copy_vite_template(project_id)
         ensure_project_metadata(project_id)
+        set_project_site_state(project_id, "new")
         background_tasks.add_task(ensure_npm_dependencies, project_dir)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -163,6 +165,7 @@ def post_chat(project_id: str, body: ChatRequest) -> ChatResponse:
             warnings=warnings,
         )
     )
+    set_project_site_state(project_id, "ready")
 
     return ChatResponse(
         message="Website generated successfully with warnings" if warnings else "Website generated successfully",
@@ -234,6 +237,7 @@ def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
             warnings=warnings,
         )
     )
+    set_project_site_state(project_id, "ready")
     append_job_artifact(
         project_id,
         job.id,
@@ -676,6 +680,7 @@ def post_project_edit_apply(project_id: str, body: ProjectEditApplyRequest) -> P
                 if path not in {file["path"] for file in changed_files}
             ],
         ]
+        set_project_site_state(project_id, "ready")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

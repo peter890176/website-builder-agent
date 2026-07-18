@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -54,9 +56,11 @@ class ProjectSummary(BaseModel):
     project_id: str
     name: str
     workspace_path: str
+    created_at: str | None = None
     updated_at: str | None = None
     file_count: int = 0
     has_draft: bool = False
+    site_state: Literal["new", "ready"] = "new"
 
 
 class ProjectListResponse(BaseModel):
