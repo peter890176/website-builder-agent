@@ -39,6 +39,8 @@ import {
 } from "@/lib/api";
 import {
   deleteFileFromWebContainer,
+  getLoadedWebContainerPreviewUrl,
+  markWebContainerPreviewLoaded,
   renameFileInWebContainer,
   restoreDefaultWebContainerTemplate,
   writeFilesToWebContainer,
@@ -937,9 +939,14 @@ export default function BuilderPage() {
   const previewSource = webPreviewUrl ? "live" : "none";
   const verificationStatus = verifyLoading ? "verifying" : diagnostics?.status ?? "idle";
   const changedFiles = useMemo(() => result?.changed_files ?? [], [result?.changed_files]);
-  const hasProjectDraft = Boolean(result) || Boolean(activeProject?.has_draft) || ["live_unverified", "verifying", "passed", "failed"].includes(diagnostics?.status ?? "");
+  const legacyHasProjectDraft = Boolean(result) || Boolean(activeProject?.has_draft) || ["live_unverified", "verifying", "passed", "failed"].includes(diagnostics?.status ?? "");
+  // A project workspace always has starter files. The explicit lifecycle state
+  // is the single source of truth for all user-facing create/edit decisions.
+  const projectSiteState = result ? "ready" : (activeProject?.site_state ?? (legacyHasProjectDraft ? "ready" : "new"));
+  const hasWebsite = projectSiteState === "ready";
+  const isNewProject = !hasWebsite;
   const livePreviewStarting = webBooting && !webPreviewUrl;
-  const canOpenBuiltPreview = Boolean(projectId && (hasProjectDraft || projectFiles.length > 0));
+  const canOpenBuiltPreview = Boolean(projectId && (hasWebsite || projectFiles.length > 0));
   const allGuidedSectionsOpen = GUIDED_SECTION_IDS.every((sectionId) => openBuilderSections.includes(sectionId));
   const filteredProjectFiles = useMemo(() => {
     const query = fileSearch.trim().toLowerCase();
@@ -1120,12 +1127,51 @@ export default function BuilderPage() {
 
   const resetProjectSession = useCallback(() => {
     livePreviewRunRef.current += 1;
+    setWebsiteType("");
+    setCustomWebsiteType("");
+    setWebsiteFormat("");
+    setMainObjective("");
+    setCustomMainObjective("");
+    setBrandName("");
+    setBusinessDescription("");
+    setTargetAudience("");
+    setToneOfVoice("");
+    setCustomToneOfVoice("");
+    setCtaAction("");
+    setCustomCtaAction("");
+    setCtaButtonText("");
+    setCtaDestination("");
+    setCustomCtaDestination("");
+    setCtaLink("");
+    setDesignStyle("");
+    setCustomDesignStyle("");
+    setColorPalette("");
+    setCustomColorPalette("");
+    setTypographyVibe("");
+    setLayoutDensity("");
+    setAnimationLevel("");
+    setReferenceWebsites("");
+    setSections([]);
+    setCustomSections("");
+    setRequiredCopy("");
+    setSpecialInstructions("");
+    setStructuredData("");
+    setTouchedGuidedFields(new Set());
+    setOpenBuilderSections([DEFAULT_GUIDED_SECTION]);
+    setIncludeGuidedFields(true);
+    setAiMessage("");
+    setPromptPreview("");
+    setPromptPreviewSource("");
     setResult(null);
     setProjectFiles([]);
     setSelectedFile(null);
     setOpenFiles([]);
     setFileSearch("");
     setSelectedContextFiles([]);
+    setIncludeCurrentFile(true);
+    setIncludeSelection(true);
+    setIncludeDiagnostics(true);
+    setIncludeChangedFiles(true);
     setContextPanelOpen(false);
     setContextSearch("");
     setFileContent("");
@@ -1148,6 +1194,7 @@ export default function BuilderPage() {
     setBuiltPreviewError(null);
     setPendingDeployIntent(null);
     setVerifyLoading(false);
+    setActiveToolTab("jobs");
     autoLiveProjectRef.current = null;
   }, []);
 
@@ -1350,7 +1397,14 @@ export default function BuilderPage() {
     }
 
     const previewProjectId = projectId;
-    const previewHasDraft = hasProjectDraft;
+    const previewHasDraft = !isNewProject;
+    const previewKind = previewHasDraft ? "project" : "starter";
+    const loadedPreviewUrl = getLoadedWebContainerPreviewUrl(previewProjectId, previewKind);
+    if (loadedPreviewUrl) {
+      setWebPreviewUrl(loadedPreviewUrl);
+      setWebBooting(false);
+      return;
+    }
     const runId = livePreviewRunRef.current + 1;
     livePreviewRunRef.current = runId;
     const isCurrentRun = () => activeProjectIdRef.current === previewProjectId && livePreviewRunRef.current === runId;
@@ -1387,10 +1441,13 @@ export default function BuilderPage() {
           onServerReady: handleServerReady,
           onServerRestart: handleServerRestart,
           emitCachedServerReady: false,
-          restartAfterSync: true,
+          // Vite applies ordinary file changes through HMR. Avoid restarting
+          // the dev server here so the iframe never keeps a stale server URL.
+          restartAfterSync: false,
           resetTemplateStyles: true,
         });
         if (isCurrentRun()) {
+          markWebContainerPreviewLoaded(previewProjectId, previewKind);
           setPreviewVersion((current) => current + 1);
         }
       } else {
@@ -1400,6 +1457,9 @@ export default function BuilderPage() {
           onServerRestart: handleServerRestart,
           emitCachedServerReady: false,
         });
+        if (isCurrentRun()) {
+          markWebContainerPreviewLoaded(previewProjectId, previewKind);
+        }
       }
     } catch (err: unknown) {
       if (isCurrentRun()) {
@@ -1410,7 +1470,7 @@ export default function BuilderPage() {
         setWebBooting(false);
       }
     }
-  }, [hasProjectDraft, projectId]);
+  }, [isNewProject, projectId]);
 
   useEffect(() => {
     if (!projectId) {
@@ -1421,16 +1481,16 @@ export default function BuilderPage() {
     if (
       currentAutoLive
       && currentAutoLive.projectId === projectId
-      && currentAutoLive.hasDraft === hasProjectDraft
+      && currentAutoLive.hasDraft === !isNewProject
     ) {
       return;
     }
-    autoLiveProjectRef.current = { projectId, hasDraft: hasProjectDraft };
+    autoLiveProjectRef.current = { projectId, hasDraft: !isNewProject };
     const timer = window.setTimeout(() => {
       void startLivePreview();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [hasProjectDraft, projectId, startLivePreview]);
+  }, [isNewProject, projectId, startLivePreview]);
 
   useEffect(() => {
     if (!historyOpen && !exportDeployOpen && !renameDialogOpen) {
@@ -1746,6 +1806,9 @@ export default function BuilderPage() {
         onServerRestart: () => setWebPreviewUrl(null),
         resetTemplateStyles: true,
       });
+      if (projectId) {
+        markWebContainerPreviewLoaded(projectId, "project");
+      }
 
       const selectedUpdate = selectedFile
         ? response.changed_files.find((file) => file.path === selectedFile)
@@ -1884,6 +1947,11 @@ export default function BuilderPage() {
     try {
       const response = await sendChatDraft(projectId, prompt, mode);
       setResult(response);
+      setProjects((current) => current.map((project) =>
+        project.project_id === projectId
+          ? { ...project, has_draft: true, site_state: "ready" }
+          : project,
+      ));
       setAiMessage("");
       await refreshProjectFiles();
       await syncChatResponseToWebContainer(response);
@@ -2014,7 +2082,7 @@ export default function BuilderPage() {
       return;
     }
 
-    if (hasProjectDraft) {
+    if (hasWebsite) {
       await requestEditPreview(prompt);
       return;
     }
@@ -2034,11 +2102,11 @@ export default function BuilderPage() {
   }
 
   async function requestDirectDraftFromComposer() {
-    const snapshotLabel = hasProjectDraft ? "AI draft applied" : "Generated conversational draft";
+    const snapshotLabel = hasWebsite ? "AI draft applied" : "Generated conversational draft";
     if (!canRunPromptPreview) {
       return;
     }
-    await requestProjectDraft(promptPreview, hasProjectDraft ? "auto" : "generate", snapshotLabel);
+    await requestProjectDraft(promptPreview, hasWebsite ? "auto" : "generate", snapshotLabel);
   }
 
   async function acceptEditPreview() {
@@ -2716,7 +2784,7 @@ export default function BuilderPage() {
                 }}
                 className="max-h-56 min-h-32 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none ring-cyan-400 focus:ring-2"
                 placeholder={
-                  hasProjectDraft
+                  hasWebsite
                     ? "For example: research stronger CTA copy, update the Hero, then prepare a Diff Review"
                     : "For example: research modern bilingual joke sites, then build a searchable archive with categories"
                 }
@@ -2806,7 +2874,7 @@ export default function BuilderPage() {
                 </div>
               ) : null}
 
-              {hasProjectDraft ? (
+              {hasWebsite ? (
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -2954,8 +3022,8 @@ export default function BuilderPage() {
                 </p>
               )}
 
-              <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-col gap-2 border-t border-cyan-500/20 bg-slate-950/95 px-4 py-3 backdrop-blur sm:flex-row">
-                {hasProjectDraft ? (
+              <div className="-mx-4 -mb-4 flex flex-col gap-2 border-t border-cyan-500/20 bg-slate-950 px-4 py-3 sm:flex-row">
+                {hasWebsite ? (
                   <button
                   type="button"
                   onClick={() => void requestInlineEditPreview()}
@@ -2973,7 +3041,7 @@ export default function BuilderPage() {
                   Edit Selection with AI
                 </button>
                 ) : null}
-                {hasProjectDraft ? (
+                {hasWebsite ? (
                   <button
                     type="button"
                     onClick={() => void requestDirectDraftFromComposer()}
@@ -3004,7 +3072,7 @@ export default function BuilderPage() {
                       : editPreviewLoading
                         ? "Generating diff..."
                         : promptPreview && !promptPreviewDirty
-                          ? hasProjectDraft
+                          ? hasWebsite
                             ? "Generate Diff Review"
                             : "Generate Website"
                           : promptPreviewDirty
@@ -3511,10 +3579,10 @@ export default function BuilderPage() {
                   <h2 className="text-sm font-medium text-zinc-700">Preview</h2>
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      activePreviewUrl && hasProjectDraft ? verificationStatusClass(verificationStatus) : "bg-zinc-100 text-zinc-500"
+                      activePreviewUrl && hasWebsite ? verificationStatusClass(verificationStatus) : "bg-zinc-100 text-zinc-500"
                     }`}
                   >
-                    {webPreviewUrl ? (hasProjectDraft ? "Live" : "Website not generated yet") : livePreviewStarting ? "Starting Live" : "No preview"}
+                    {webPreviewUrl ? (hasWebsite ? "Live" : "Website not generated yet") : livePreviewStarting ? "Starting Live" : "No preview"}
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-zinc-500">
@@ -3561,7 +3629,7 @@ export default function BuilderPage() {
               </div>
             ) : activePreviewUrl ? (
               <div className="min-h-0 flex-1 overflow-auto bg-zinc-100">
-                {!hasProjectDraft ? (
+                {!hasWebsite ? (
                   <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-600">
                     Website not generated yet. The preview environment is ready and will update after you generate a website.
                   </div>

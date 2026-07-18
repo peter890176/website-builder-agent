@@ -8,6 +8,7 @@ export type WebContainerFileChange = {
 };
 
 type ServerReadyListener = (url: string) => void;
+export type WebContainerPreviewKind = "starter" | "project";
 
 type WebContainerRuntimeState = {
   webcontainerInstance: WebContainer | null;
@@ -19,6 +20,8 @@ type WebContainerRuntimeState = {
   serverReadyHandlerRegistered: boolean;
   serverReadyListeners: Set<ServerReadyListener>;
   lastServerUrl: string | null;
+  loadedPreview: { projectId: string; kind: WebContainerPreviewKind } | null;
+  installedPackageJsonContent: string | null;
 };
 
 declare global {
@@ -35,6 +38,8 @@ const runtimeState = globalThis.__websiteBuilderWebContainerState ??= {
   serverReadyHandlerRegistered: false,
   serverReadyListeners: new Set<ServerReadyListener>(),
   lastServerUrl: null,
+  loadedPreview: null,
+  installedPackageJsonContent: null,
 };
 
 const DEFAULT_TEMPLATE_STYLE_PATH = "src/style.css";
@@ -133,6 +138,27 @@ export async function bootViteReactProject({
   return webcontainer;
 }
 
+export function getLoadedWebContainerPreviewUrl(
+  projectId: string,
+  kind: WebContainerPreviewKind,
+): string | null {
+  if (
+    runtimeState.loadedPreview?.projectId !== projectId
+    || runtimeState.loadedPreview.kind !== kind
+    || !runtimeState.devProcess
+  ) {
+    return null;
+  }
+  return runtimeState.lastServerUrl;
+}
+
+export function markWebContainerPreviewLoaded(
+  projectId: string,
+  kind: WebContainerPreviewKind,
+): void {
+  runtimeState.loadedPreview = { projectId, kind };
+}
+
 function registerServerReadyListener(
   webcontainer: WebContainer,
   onServerReady: ServerReadyListener,
@@ -177,6 +203,9 @@ async function ensureProjectBooted(webcontainer: WebContainer, onLog: (line: str
         throw new Error(`npm install failed with exit code ${installExitCode}`);
       }
 
+      runtimeState.installedPackageJsonContent = String(
+        await webcontainer.fs.readFile("package.json", "utf-8"),
+      );
       runtimeState.bootedProject = true;
     })().catch((error: unknown) => {
       runtimeState.projectBootPromise = null;
@@ -202,6 +231,7 @@ async function ensureDevServerRunning(webcontainer: WebContainer, onLog: (line: 
         if (runtimeState.devProcess === process) {
           runtimeState.devProcess = null;
           runtimeState.devServerPromise = null;
+          runtimeState.loadedPreview = null;
         }
       });
     })().catch((error: unknown) => {
@@ -298,6 +328,7 @@ export async function stopWebContainerDevServer(): Promise<void> {
     return;
   }
   const process = runtimeState.devProcess;
+  runtimeState.loadedPreview = null;
   process.kill();
   await process.exit.catch(() => 1);
   if (runtimeState.devProcess === process) {
@@ -330,6 +361,7 @@ export async function restartWebContainerDevServer({
     if (runtimeState.devProcess === process) {
       runtimeState.devProcess = null;
       runtimeState.devServerPromise = null;
+      runtimeState.loadedPreview = null;
     }
   });
   await waitForServerReady();
@@ -346,7 +378,16 @@ export async function restoreDefaultWebContainerTemplate({
   onServerRestart?: () => void;
   emitCachedServerReady?: boolean;
 }): Promise<void> {
-  const webcontainer = await bootViteReactProject({ onLog, onServerReady, emitCachedServerReady });
+  // On a brand-new WebContainer, bootViteReactProject already mounts this
+  // template and starts Vite. Restarting it immediately creates an avoidable
+  // window where the iframe can point at a stopped server.
+  if (!runtimeState.bootedProject) {
+    await bootViteReactProject({ onLog, onServerReady, emitCachedServerReady });
+    return;
+  }
+
+  const webcontainer = await getWebContainer();
+  registerServerReadyListener(webcontainer, onServerReady, { emitCached: emitCachedServerReady });
   onLog("Restoring default Vite React template...\n");
   await webcontainer.mount(viteReactTemplate);
   await restartWebContainerDevServer({ onLog, onServerReady, onServerRestart });
@@ -375,7 +416,11 @@ export async function writeFilesToWebContainer(
   }
 
   const webcontainer = await bootViteReactProject({ onLog, onServerReady, emitCachedServerReady });
-  const shouldInstall = files.some((file) => normalizePath(file.path) === "package.json");
+  const incomingPackageJson = files.find((file) => normalizePath(file.path) === "package.json");
+  const shouldInstall = Boolean(
+    incomingPackageJson
+    && incomingPackageJson.content !== runtimeState.installedPackageJsonContent,
+  );
   const incomingPaths = new Set(files.map((file) => normalizePath(file.path)));
 
   if (resetTemplateStyles && !incomingPaths.has(DEFAULT_TEMPLATE_STYLE_PATH)) {
@@ -403,6 +448,7 @@ export async function writeFilesToWebContainer(
     if (installExitCode !== 0) {
       throw new Error(`npm install failed with exit code ${installExitCode}`);
     }
+    runtimeState.installedPackageJsonContent = incomingPackageJson?.content ?? null;
   }
 
   if (restartAfterSync || shouldInstall) {
