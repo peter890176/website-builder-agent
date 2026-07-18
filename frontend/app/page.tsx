@@ -2215,8 +2215,8 @@ export default function BuilderPage() {
 
   return (
     <div className="builder-dark min-h-full text-zinc-100">
-      <div className="mx-auto flex min-h-full max-w-[1840px] flex-col gap-5 px-4 py-6 lg:flex-row">
-        <section className="flex w-full flex-col gap-4 lg:h-[calc(100vh-4rem)] lg:min-h-0 lg:w-[520px] lg:min-w-[360px] lg:max-w-[760px] lg:shrink-0 lg:resize-x lg:overflow-y-auto lg:pr-1">
+      <div className="mx-auto flex min-h-full max-w-[1840px] flex-col gap-5 px-4 py-6 lg:items-start lg:flex-row">
+        <section className="flex w-full flex-col gap-4 lg:w-[520px] lg:min-w-[360px] lg:max-w-[760px] lg:shrink-0">
           <div className="order-0 shrink-0">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
@@ -2296,7 +2296,7 @@ export default function BuilderPage() {
             </div>
           </div>
 
-          <div className="order-1 min-h-[220px] flex-1 overflow-auto rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 text-sm shadow-sm backdrop-blur">
+          <div className="order-1 min-h-[220px] rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 text-sm shadow-sm backdrop-blur">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="font-medium text-zinc-100">Guided fields</p>
@@ -2728,7 +2728,7 @@ export default function BuilderPage() {
           </div>
 
           {projectId ? (
-            <form onSubmit={handleEditSubmit} className="order-2 flex shrink-0 flex-col gap-3 rounded-2xl border border-cyan-500/25 bg-slate-950/90 p-4 shadow-sm backdrop-blur lg:max-h-[72vh] lg:min-h-[320px] lg:overflow-y-auto">
+            <form onSubmit={handleEditSubmit} className="order-2 flex flex-col gap-3 rounded-2xl border border-cyan-500/25 bg-slate-950/90 p-4 shadow-sm backdrop-blur">
               <div className="flex items-start justify-between gap-3">
                 <label htmlFor="aiPrompt" className="text-sm font-medium text-cyan-100">
                   Ask AI
