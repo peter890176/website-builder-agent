@@ -159,7 +159,7 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
             value={snapshotLabel}
             onChange={(event) => setSnapshotLabel(event.target.value)}
             className="min-w-0 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs outline-none ring-zinc-400 focus:ring-2 sm:w-56"
-            placeholder="Snapshot name, for example: first homepage draft"
+            placeholder="Version name, for example: first homepage"
             disabled={!projectId || loading}
             maxLength={80}
           />

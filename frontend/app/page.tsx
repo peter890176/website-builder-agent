@@ -577,21 +577,21 @@ function buildDiagnosticsSummary(diagnostics: ProjectDiagnosticsResponse | null)
 
 function verificationStatusLabel(status: ProjectDiagnosticsResponse["status"]): string {
   if (status === "live_unverified") {
-    return "Live Unverified";
+    return "Finishing Website";
   }
   if (status === "verifying") {
-    return "Verifying";
+    return "Finishing Website";
   }
   if (status === "passed") {
-    return "Verified";
+    return "Ready";
   }
   if (status === "failed") {
-    return "Failed";
+    return "Needs Attention";
   }
   if (status === "drafting") {
-    return "Drafting";
+    return "Creating Website";
   }
-  return "Idle";
+  return "Not Started";
 }
 
 function verificationStatusClass(status: ProjectDiagnosticsResponse["status"]): string {
@@ -621,7 +621,7 @@ function editAgentStatusLabel(status: "idle" | "editing" | "review" | "applying"
     return "Applying";
   }
   if (status === "verifying") {
-    return "Verifying";
+    return "Finishing Website";
   }
   if (status === "needs_attention") {
     return "Needs Attention";
@@ -1294,11 +1294,11 @@ export default function BuilderPage() {
       const elapsed = Math.floor((Date.now() - startedAt) / 1000);
 
       if (elapsed < 45) {
-        setLoadingHint("Planning files and generating code...");
+        setLoadingHint("Creating your website...");
       } else if (elapsed < 120) {
-        setLoadingHint("Syncing files and running production build...");
+        setLoadingHint("Preparing your preview...");
       } else {
-        setLoadingHint("Auto-repairing and retrying if the build fails...");
+        setLoadingHint("Finishing the details...");
       }
     }, 1000);
 
@@ -1587,7 +1587,7 @@ export default function BuilderPage() {
       }
       if (nextDiagnostics.status === "passed") {
         await createSnapshot(projectId, {
-          label: "Verified build",
+          label: "Website ready",
           kind: "verify",
           prompt: lastAiPromptRef.current || finalPrompt,
           notes: nextDiagnostics.notes.join(". "),
@@ -1597,13 +1597,20 @@ export default function BuilderPage() {
       }
       return nextDiagnostics;
     } catch (err: unknown) {
-      setDiagnosticsError(err instanceof Error ? err.message : "Backend verification failed");
+      setDiagnosticsError(err instanceof Error ? err.message : "The website check could not be completed");
       setDiagnostics((current) => current ? { ...current, status: "failed" } : current);
       setActiveToolTab("problems");
       return null;
     } finally {
       setVerifyLoading(false);
     }
+  }
+
+  function finishProjectInBackground() {
+    setEditAgentStatus("verifying");
+    void runBackendVerify().then((checked) => {
+      setEditAgentStatus(checked?.status === "failed" ? "needs_attention" : "idle");
+    });
   }
 
   async function openBuiltPreviewInNewTab() {
@@ -1938,7 +1945,7 @@ export default function BuilderPage() {
     const prompt = message.trim();
     lastAiPromptRef.current = prompt;
     setLoading(true);
-    setLoadingHint(mode === "generate" ? "Generating draft..." : "Applying draft...");
+    setLoadingHint(mode === "generate" ? "Creating your website..." : "Applying your changes...");
     setError(null);
     setEditPreviewError(null);
     setEditPreview(null);
@@ -1962,11 +1969,9 @@ export default function BuilderPage() {
         notes: response.reply,
       }).catch(() => undefined);
       await refreshDiagnostics();
-      setEditAgentStatus("verifying");
-      const verified = await runBackendVerify();
-      setEditAgentStatus(verified?.status === "failed" ? "needs_attention" : "idle");
+      finishProjectInBackground();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "AI draft failed";
+      const message = err instanceof Error ? err.message : "Unable to create the website";
       setError(message);
       setEditPreviewError(message);
       setEditAgentStatus("needs_attention");
@@ -2070,7 +2075,7 @@ export default function BuilderPage() {
     if (deployIntent) {
       if (diagnostics?.status !== "passed") {
         setPendingDeployIntent(null);
-        setEditPreviewError("Backend verification must pass before deploying. Run verification first, then ask AI to deploy again.");
+        setEditPreviewError("The website is still being prepared. Wait until it is ready, then ask AI to publish it again.");
         setActiveToolTab("problems");
         return;
       }
@@ -2087,7 +2092,7 @@ export default function BuilderPage() {
       return;
     }
 
-    await requestProjectDraft(prompt, "generate", "Generated conversational draft");
+    await requestProjectDraft(prompt, "generate", "Website created from conversation");
   }
 
   async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
@@ -2102,7 +2107,7 @@ export default function BuilderPage() {
   }
 
   async function requestDirectDraftFromComposer() {
-    const snapshotLabel = hasWebsite ? "AI draft applied" : "Generated conversational draft";
+    const snapshotLabel = hasWebsite ? "AI changes applied" : "Website created from conversation";
     if (!canRunPromptPreview) {
       return;
     }
@@ -2165,9 +2170,7 @@ export default function BuilderPage() {
               updated_at: null,
             },
       );
-      setEditAgentStatus("verifying");
-      const verified = await runBackendVerify();
-      setEditAgentStatus(verified?.status === "failed" ? "needs_attention" : "idle");
+      finishProjectInBackground();
     } catch (err: unknown) {
       setEditAgentStatus("needs_attention");
       setEditPreviewError(err instanceof Error ? err.message : "Unable to apply AI changes");
@@ -2254,14 +2257,14 @@ export default function BuilderPage() {
                     value={projectId ?? ""}
                     onChange={(event) => handleProjectSelect(event.target.value)}
                     disabled={bootstrapping || loading || projectActionLoading || projects.length === 0}
-                    className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-cyan-500/40 focus:ring-2 disabled:cursor-not-allowed disabled:text-zinc-500"
+                    className="mt-2 w-full cursor-pointer rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-cyan-500/40 focus:ring-2 disabled:cursor-not-allowed disabled:text-zinc-500"
                   >
                     {projects.length === 0 ? (
                       <option value="">No projects</option>
                     ) : null}
                     {projects.map((project) => (
                       <option key={project.project_id} value={project.project_id}>
-                        {project.name} ({project.file_count})
+                        {project.name}
                       </option>
                     ))}
                   </select>
@@ -2285,12 +2288,6 @@ export default function BuilderPage() {
                     </button>
                   </div>
 
-                  {activeProject ? (
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-500">
-                      <span>{activeProject.has_draft ? "Draft ready" : "Template"}</span>
-                      <span>{activeProject.file_count} editable files</span>
-                    </div>
-                  ) : null}
                 </div>
               </details>
             </div>
@@ -2848,7 +2845,7 @@ export default function BuilderPage() {
                     {pendingDeployIntent.intent.projectName ? ` as ${pendingDeployIntent.intent.projectName}` : ""}
                   </p>
                   <p className="mt-1">
-                    This will publish the current verified build and create a deployment job.
+                    This will publish the website when it is ready.
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -3018,7 +3015,7 @@ export default function BuilderPage() {
               </div>
               ) : (
                 <p className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-5 text-zinc-500">
-                  No project files yet. Describe the site or app you want, and AI will create the first draft directly from this conversation.
+                  No website yet. Describe the site or app you want, and AI will create the first version directly from this conversation.
                 </p>
               )}
 
@@ -3048,7 +3045,7 @@ export default function BuilderPage() {
                     disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || deployIntentLoading || !projectId || !canRunPromptPreview}
                     className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300"
                   >
-                    {loading ? loadingHint : "Apply as Draft"}
+                    {loading ? loadingHint : "Apply Changes"}
                   </button>
                 ) : null}
                 <button
@@ -3396,7 +3393,7 @@ export default function BuilderPage() {
                   </span>
                 </div>
                 <p className="mt-1 text-xs leading-5 text-zinc-500">
-                  Jobs show current progress. Switch to Problems, Build Logs, or Terminal when needed.
+                  Your website is checked automatically. Advanced details are available below when needed.
                 </p>
               </div>
             </div>
@@ -3442,7 +3439,7 @@ export default function BuilderPage() {
                 <div className="space-y-3">
                   <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-xs leading-5 text-zinc-600">
-                      Verification runs automatically after AI generation, AI edits, and restores. Re-run it here after manual edits or before deploy.
+                      Website checks run automatically after generation, edits, and restores. Run them again after manual code changes if needed.
                     </p>
                     <button
                       type="button"
@@ -3450,7 +3447,7 @@ export default function BuilderPage() {
                       className="shrink-0 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400"
                       disabled={!projectId || verifyLoading}
                     >
-                      {verifyLoading ? "Verifying..." : "Re-run Verify"}
+                      {verifyLoading ? "Checking..." : "Check Again"}
                     </button>
                   </div>
                   {diagnosticsError ? (
@@ -3475,7 +3472,7 @@ export default function BuilderPage() {
 
                   {diagnostics?.status === "failed" && !(diagnostics.typescript_errors.length || diagnostics.runtime_errors.length || diagnosticsError) ? (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-                      Backend verify failed. Open Build Logs for details.
+                      The website needs attention. Open the advanced logs for more details.
                     </div>
                   ) : null}
 
@@ -3701,7 +3698,7 @@ export default function BuilderPage() {
                   setResult(changedResponse);
                   await refreshProjectFiles();
                   await syncChatResponseToWebContainer(changedResponse);
-                  void runBackendVerify();
+                  finishProjectInBackground();
                 }}
               />
             </div>

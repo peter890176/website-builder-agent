@@ -112,7 +112,7 @@ export function ExportDeployPanel({ projectId, diagnostics, chrome = true }: Exp
             Deploy
           </button>
         </div>
-        {!canDeploy ? <p className="text-xs text-amber-700">Backend verification must pass before deploy.</p> : null}
+        {!canDeploy ? <p className="text-xs text-amber-700">The website must be ready before it can be published.</p> : null}
         {deployments.length > 0 ? (
           <div className="space-y-2">
             {deployments.slice(0, 8).map((deployment) => (

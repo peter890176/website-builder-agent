@@ -120,7 +120,7 @@ flowchart LR
 
 ### Draft Graph
 
-The draft graph powers new-site requests through `POST /api/projects/{project_id}/chat/draft`. It favors fast live preview by planning, generating, repairing imports, and syncing files, but skips production build and runtime smoke validation until the user runs backend verification. Draft edits still use the edit-draft patch path because they start from existing project files and need diff-oriented patch handling.
+The draft graph powers new-site requests through `POST /api/projects/{project_id}/chat/draft`. It favors fast live preview by planning, generating, repairing imports, and syncing files. After the preview is synchronized, the frontend starts backend validation without blocking the user. Validation runs a production build and a browser runtime smoke test, applies targeted repairs when either stage fails, and returns all repair changes to the live preview in one final batch. Draft edits still use the edit-draft patch path because they start from existing project files and need diff-oriented patch handling.
 
 ```mermaid
 flowchart LR
@@ -151,7 +151,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | `website_builder_graph` | `plan_project` | production build and runtime smoke test | returns to `plan`, `generate`, `repair`, `sync`, or `smoke` based on `resume_stage` | `finalize` or `mark_failure` |
 | `website_edit_graph` | `sync_project` | production build and runtime smoke test | returns to `sync` or `smoke` | `finalize` or `mark_failure` |
-| `website_draft_graph` | `plan_project` | deferred until explicit backend verification | returns to `plan`, `generate`, `repair`, or `sync` | `finalize_draft` or `mark_failure` |
+| `website_draft_graph` | `plan_project` | production build and browser smoke validation start after preview sync | returns to `plan`, `generate`, `repair`, or `sync`; the validation service owns later build/runtime repairs | `finalize_draft` or `mark_failure` |
 
 ## Data Boundaries
 

@@ -2,7 +2,7 @@
 
 AI-powered website builder and browser-based IDE for generating, editing, verifying, and exporting Vite React websites.
 
-This project is a full-stack AI agent application. Users describe the website they want, review a generated file plan, preview the result in a live WebContainer environment, edit files in Monaco, run backend verification, and export or deploy the finished project.
+This project is a full-stack AI agent application. Users describe the website they want, review a generated file plan, preview the result in a live WebContainer environment, edit files in Monaco, and export or deploy the finished project. Production and browser checks run automatically after generated changes without blocking the live preview.
 
 ## Highlights
 

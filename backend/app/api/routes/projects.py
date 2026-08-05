@@ -13,7 +13,7 @@ from app.agents.graph import (
 from app.agents.imports import normalize_generated_files, normalize_posix_path
 from app.agents.state import AgentState
 from app.agents.tsc_errors import build_fix_hints
-from app.core.config import MAX_BUILD_FIX_ATTEMPTS
+from app.core.config import APP_BASE_URL, MAX_BUILD_FIX_ATTEMPTS, RUNTIME_SMOKE_TIMEOUT_MS
 from app.schemas.diagnostics import ProjectDiagnosticsResponse
 from app.schemas.edit_review import (
     ProjectEditApplyRequest,
@@ -49,6 +49,7 @@ from app.services.diagnostics import (
 from app.services.jobs import append_job_artifact, append_job_log, create_job, update_job
 from app.services.project_edit import clean_edit_patches, request_project_edit
 from app.services.dependencies import install_planned_dependencies
+from app.services.runtime_smoke import run_runtime_smoke_test
 from app.services.scaffold import copy_vite_template, ensure_npm_dependencies, scaffold_vite_project
 from app.services.workspace import (
     create_editable_project_file,
@@ -188,7 +189,7 @@ def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
     job = create_job(
         project_id,
         "website_generation",
-        title="Generate website draft" if body.mode != "edit" else "Generate edit draft",
+        title="Create website" if body.mode != "edit" else "Apply website changes",
     )
     append_job_log(project_id, job.id, "Preparing project workspace")
     update_job(project_id, job.id, status="running", progress=5)
@@ -249,14 +250,14 @@ def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
         project_id,
         job.id,
         artifact_type="draft",
-        name="Live preview draft",
+        name="Live preview",
         metadata={"file_count": len(files), "warning_count": len(warnings)},
     )
     append_job_log(project_id, job.id, "Draft is ready for Live Preview")
     update_job(project_id, job.id, status="succeeded", progress=100)
 
     return ChatResponse(
-        message="Draft ready",
+        message="Website preview ready",
         reply=result.get("reply", "Draft files are ready for live preview."),
         project_id=project_id,
         workspace_path=str(project_dir),
@@ -269,7 +270,7 @@ def post_chat_draft(project_id: str, body: ChatRequest) -> ChatResponse:
 
 @router.post("/{project_id}/verify", response_model=ProjectDiagnosticsResponse)
 def post_project_verify(project_id: str) -> ProjectDiagnosticsResponse:
-    job = create_job(project_id, "verification", title="Backend verification")
+    job = create_job(project_id, "verification", title="Finish website checks")
     append_job_log(project_id, job.id, "Starting backend verification")
     update_job(project_id, job.id, status="running", progress=5)
     try:
@@ -400,12 +401,57 @@ def _verify_project_with_repair(project_id: str, project_dir, job_id: str | None
         )
 
         if passed:
-            if attempt > 0:
-                diagnostics.notes = [*diagnostics.notes, "AI repair applied", "Re-ran verify"]
             if job_id:
                 append_job_log(project_id, job_id, "Production build passed")
-                update_job(project_id, job_id, progress=90)
-            return diagnostics
+                append_job_log(project_id, job_id, "Checking the website in a browser")
+                update_job(project_id, job_id, progress=85)
+
+            runtime = run_runtime_smoke_test(
+                project_id,
+                base_url=APP_BASE_URL,
+                timeout_ms=RUNTIME_SMOKE_TIMEOUT_MS,
+            )
+            if runtime.ok:
+                if attempt > 0:
+                    diagnostics.notes = [*diagnostics.notes, "Automatic repair applied", "Website rechecked"]
+                diagnostics.notes = [*diagnostics.notes, "Website opened successfully in a browser"]
+                if job_id:
+                    append_job_log(project_id, job_id, "Browser check passed")
+                    update_job(project_id, job_id, progress=90)
+                return diagnostics
+
+            diagnostics.status = "failed"
+            diagnostics.build_log = f"{build_log}\n\n{runtime.log}".strip()
+            diagnostics.runtime_errors = runtime.errors or [runtime.log]
+            diagnostics.notes = [*diagnostics.notes, "The website needs attention before it is ready"]
+            last_diagnostics = diagnostics
+            if job_id:
+                append_job_log(project_id, job_id, "Browser check found a problem", level="warning")
+            if runtime.infrastructure_error or attempt >= VERIFY_REPAIR_ATTEMPTS:
+                break
+
+            try:
+                if job_id:
+                    append_job_log(project_id, job_id, f"Running automatic repair attempt {attempt + 1}")
+                    update_job(project_id, job_id, progress=min(45 + attempt * 15, 85))
+                repaired = _apply_verify_repair(
+                    project_id,
+                    project_dir,
+                    runtime.log,
+                    attempt + 1,
+                    failure_stage="runtime",
+                )
+            except (RuntimeError, ValueError) as exc:
+                logger.exception("Browser repair failed for project %s", project_id)
+                last_diagnostics.notes = [*last_diagnostics.notes, f"Automatic repair failed: {exc}"]
+                if job_id:
+                    append_job_log(project_id, job_id, f"Automatic repair failed: {exc}", level="error")
+                break
+            if not repaired:
+                if job_id:
+                    append_job_log(project_id, job_id, "Automatic repair produced no changes", level="warning")
+                break
+            continue
 
         last_diagnostics = diagnostics
         if job_id:
@@ -435,14 +481,21 @@ def _verify_project_with_repair(project_id: str, project_dir, job_id: str | None
     return last_diagnostics
 
 
-def _apply_verify_repair(project_id: str, project_dir, build_log: str, attempt: int) -> bool:
+def _apply_verify_repair(
+    project_id: str,
+    project_dir,
+    build_log: str,
+    attempt: int,
+    *,
+    failure_stage: str = "build",
+) -> bool:
     logger.info("Starting verify AI repair attempt %s for project %s", attempt, project_id)
     current_sources = collect_project_sources(project_dir)
     fix = request_project_fix(
         project_dir=project_dir,
         user_message="Repair the current draft so it passes ESLint, TypeScript, and Vite verification.",
         error_message=build_log,
-        failure_stage="build",
+        failure_stage=failure_stage,
         attempt=attempt,
         max_attempts=VERIFY_REPAIR_ATTEMPTS,
         generated_files=current_sources,
