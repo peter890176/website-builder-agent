@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { AppSelect } from "@/components/AppSelect";
 import {
   deployProject,
   exportToGitHub,
@@ -102,11 +103,16 @@ export function ExportDeployPanel({ projectId, diagnostics, chrome = true }: Exp
           </button>
         </div>
         <div className="grid gap-2 md:grid-cols-3">
-          <select value={provider} onChange={(event) => setProvider(event.target.value as "vercel" | "netlify" | "cloudflare")} className="rounded-lg border border-zinc-200 px-3 py-2 text-xs">
-            <option value="vercel">Vercel</option>
-            <option value="netlify">Netlify</option>
-            <option value="cloudflare">Cloudflare Pages</option>
-          </select>
+          <AppSelect
+            value={provider}
+            onValueChange={(value) => setProvider(value as "vercel" | "netlify" | "cloudflare")}
+            options={[
+              { value: "vercel", label: "Vercel" },
+              { value: "netlify", label: "Netlify" },
+              { value: "cloudflare", label: "Cloudflare Pages" },
+            ]}
+            className="rounded-lg border border-zinc-200 px-3 py-2 text-xs"
+          />
           <input value={projectName} onChange={(event) => setProjectName(event.target.value)} className="rounded-lg border border-zinc-200 px-3 py-2 text-xs" placeholder="project/site name" />
           <button type="button" onClick={() => void deploy()} disabled={!projectId || loading || !canDeploy} className="rounded-lg bg-violet-700 px-3 py-2 text-xs font-medium text-white disabled:bg-violet-300">
             Deploy

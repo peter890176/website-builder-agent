@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import * as Accordion from "@radix-ui/react-accordion";
 import * as Tabs from "@radix-ui/react-tabs";
 
+import { AppSelect } from "@/components/AppSelect";
 import { ExportDeployPanel } from "@/components/ExportDeployPanel";
 import { HistoryPanel } from "@/components/HistoryPanel";
 import { JobPanel } from "@/components/JobPanel";
@@ -2252,22 +2253,15 @@ export default function BuilderPage() {
                     </span>
                   </div>
 
-                  <select
+                  <AppSelect
                     id="projectSwitcher"
                     value={projectId ?? ""}
-                    onChange={(event) => handleProjectSelect(event.target.value)}
+                    onValueChange={handleProjectSelect}
+                    options={projects.map((project) => ({ value: project.project_id, label: project.name }))}
+                    placeholder={projects.length === 0 ? "No projects" : undefined}
                     disabled={bootstrapping || loading || projectActionLoading || projects.length === 0}
-                    className="mt-2 w-full cursor-pointer rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-cyan-500/40 focus:ring-2 disabled:cursor-not-allowed disabled:text-zinc-500"
-                  >
-                    {projects.length === 0 ? (
-                      <option value="">No projects</option>
-                    ) : null}
-                    {projects.map((project) => (
-                      <option key={project.project_id} value={project.project_id}>
-                        {project.name}
-                      </option>
-                    ))}
-                  </select>
+                    className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-cyan-500/40 focus:ring-2 disabled:text-zinc-500"
+                  />
 
                   <div className="mt-3 flex gap-2">
                     <button
@@ -2325,18 +2319,15 @@ export default function BuilderPage() {
                   <div className="border-t border-zinc-100 p-4">
                     <div className="grid gap-3">
                       <label className="text-sm font-medium text-zinc-700" htmlFor="websiteType">Website Type</label>
-                      <select
+                      <AppSelect
                         id="websiteType"
                         value={websiteType}
-                        onChange={(event) => updateDraft(() => setWebsiteType(event.target.value), "websiteType")}
+                        onValueChange={(value) => updateDraft(() => setWebsiteType(value), "websiteType")}
+                        options={WEBSITE_TYPE_OPTIONS.map((option) => ({ value: option.label, label: option.label }))}
+                        placeholder={GUIDED_SELECT_PLACEHOLDER}
                         className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         disabled={bootstrapping || loading || !projectId}
-                      >
-                        <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                        {WEBSITE_TYPE_OPTIONS.map((option) => (
-                          <option key={option.label} value={option.label}>{option.label}</option>
-                        ))}
-                      </select>
+                      />
                       {websiteType ? (
                         <p className="text-xs text-zinc-500">
                           {WEBSITE_TYPE_OPTIONS.find((option) => option.label === websiteType)?.description}
@@ -2352,33 +2343,27 @@ export default function BuilderPage() {
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div>
                           <label className="text-sm font-medium text-zinc-700" htmlFor="websiteFormat">Website Format</label>
-                          <select
+                          <AppSelect
                             id="websiteFormat"
                             value={websiteFormat}
-                            onChange={(event) => updateDraft(() => setWebsiteFormat(event.target.value), "websiteFormat")}
+                            onValueChange={(value) => updateDraft(() => setWebsiteFormat(value), "websiteFormat")}
+                            options={WEBSITE_FORMAT_OPTIONS.map((option) => ({ value: option, label: option }))}
+                            placeholder={GUIDED_SELECT_PLACEHOLDER}
                             className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                             disabled={bootstrapping || loading || !projectId}
-                          >
-                            <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                            {WEBSITE_FORMAT_OPTIONS.map((option) => (
-                              <option key={option} value={option}>{option}</option>
-                            ))}
-                          </select>
+                          />
                         </div>
                         <div>
                           <label className="text-sm font-medium text-zinc-700" htmlFor="mainObjective">Main Objective</label>
-                          <select
+                          <AppSelect
                             id="mainObjective"
                             value={mainObjective}
-                            onChange={(event) => updateDraft(() => setMainObjective(event.target.value), "mainObjective")}
+                            onValueChange={(value) => updateDraft(() => setMainObjective(value), "mainObjective")}
+                            options={MAIN_OBJECTIVE_OPTIONS.map((option) => ({ value: option, label: option }))}
+                            placeholder={GUIDED_SELECT_PLACEHOLDER}
                             className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                             disabled={bootstrapping || loading || !projectId}
-                          >
-                            <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                            {MAIN_OBJECTIVE_OPTIONS.map((option) => (
-                              <option key={option} value={option}>{option}</option>
-                            ))}
-                          </select>
+                          />
                         </div>
                       </div>
                       {mainObjective === "Custom" ? (
@@ -2428,18 +2413,15 @@ export default function BuilderPage() {
                     />
                     <div>
                       <label className="text-sm font-medium text-zinc-700" htmlFor="toneOfVoice">Tone of Voice</label>
-                      <select
+                      <AppSelect
                         id="toneOfVoice"
                         value={toneOfVoice}
-                        onChange={(event) => updateDraft(() => setToneOfVoice(event.target.value), "toneOfVoice")}
+                        onValueChange={(value) => updateDraft(() => setToneOfVoice(value), "toneOfVoice")}
+                        options={TONE_OF_VOICE_OPTIONS.map((option) => ({ value: option, label: option }))}
+                        placeholder={GUIDED_SELECT_PLACEHOLDER}
                         className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                         disabled={bootstrapping || loading || !projectId}
-                      >
-                        <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                        {TONE_OF_VOICE_OPTIONS.map((option) => (
-                          <option key={option} value={option}>{option}</option>
-                        ))}
-                      </select>
+                      />
                     </div>
                     {toneOfVoice === "Custom" ? (
                       <input
@@ -2466,33 +2448,27 @@ export default function BuilderPage() {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
                         <label className="text-sm font-medium text-zinc-700" htmlFor="ctaAction">Main Visitor Action</label>
-                        <select
+                        <AppSelect
                           id="ctaAction"
                           value={ctaAction}
-                          onChange={(event) => updateDraft(() => setCtaAction(event.target.value), "ctaAction")}
+                          onValueChange={(value) => updateDraft(() => setCtaAction(value), "ctaAction")}
+                          options={CTA_ACTION_OPTIONS.map((option) => ({ value: option, label: option }))}
+                          placeholder={GUIDED_SELECT_PLACEHOLDER}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
-                        >
-                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                          {CTA_ACTION_OPTIONS.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
+                        />
                       </div>
                       <div>
                         <label className="text-sm font-medium text-zinc-700" htmlFor="ctaDestination">CTA Destination</label>
-                        <select
+                        <AppSelect
                           id="ctaDestination"
                           value={ctaDestination}
-                          onChange={(event) => updateDraft(() => setCtaDestination(event.target.value), "ctaDestination")}
+                          onValueChange={(value) => updateDraft(() => setCtaDestination(value), "ctaDestination")}
+                          options={CTA_DESTINATION_OPTIONS.map((option) => ({ value: option, label: option }))}
+                          placeholder={GUIDED_SELECT_PLACEHOLDER}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
-                        >
-                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                          {CTA_DESTINATION_OPTIONS.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
+                        />
                       </div>
                     </div>
                     {ctaAction === "Custom" ? (
@@ -2543,33 +2519,27 @@ export default function BuilderPage() {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>
                         <label className="text-sm font-medium text-zinc-700" htmlFor="designStyle">Design Style</label>
-                        <select
+                        <AppSelect
                           id="designStyle"
                           value={designStyle}
-                          onChange={(event) => updateDraft(() => setDesignStyle(event.target.value), "designStyle")}
+                          onValueChange={(value) => updateDraft(() => setDesignStyle(value), "designStyle")}
+                          options={DESIGN_STYLE_OPTIONS.map((option) => ({ value: option, label: option }))}
+                          placeholder={GUIDED_SELECT_PLACEHOLDER}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
-                        >
-                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                          {DESIGN_STYLE_OPTIONS.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
+                        />
                       </div>
                       <div>
                         <label className="text-sm font-medium text-zinc-700" htmlFor="colorPalette">Color Palette</label>
-                        <select
+                        <AppSelect
                           id="colorPalette"
                           value={colorPalette}
-                          onChange={(event) => updateDraft(() => setColorPalette(event.target.value), "colorPalette")}
+                          onValueChange={(value) => updateDraft(() => setColorPalette(value), "colorPalette")}
+                          options={COLOR_PALETTE_OPTIONS.map((option) => ({ value: option, label: option }))}
+                          placeholder={GUIDED_SELECT_PLACEHOLDER}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
-                        >
-                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                          {COLOR_PALETTE_OPTIONS.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
+                        />
                       </div>
                     </div>
                     {designStyle === "Custom" ? (
@@ -2588,51 +2558,42 @@ export default function BuilderPage() {
                       placeholder="Custom Color Palette, for example: navy blue, white, and gold"
                       disabled={bootstrapping || loading || !projectId}
                     />
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="min-w-0">
                         <label className="text-sm font-medium text-zinc-700" htmlFor="typographyVibe">Typography Vibe</label>
-                        <select
+                        <AppSelect
                           id="typographyVibe"
                           value={typographyVibe}
-                          onChange={(event) => updateDraft(() => setTypographyVibe(event.target.value), "typographyVibe")}
+                          onValueChange={(value) => updateDraft(() => setTypographyVibe(value), "typographyVibe")}
+                          options={TYPOGRAPHY_VIBE_OPTIONS.map((option) => ({ value: option, label: option }))}
+                          placeholder={GUIDED_SELECT_PLACEHOLDER}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
-                        >
-                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                          {TYPOGRAPHY_VIBE_OPTIONS.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
+                        />
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <label className="text-sm font-medium text-zinc-700" htmlFor="layoutDensity">Layout Density</label>
-                        <select
+                        <AppSelect
                           id="layoutDensity"
                           value={layoutDensity}
-                          onChange={(event) => updateDraft(() => setLayoutDensity(event.target.value), "layoutDensity")}
+                          onValueChange={(value) => updateDraft(() => setLayoutDensity(value), "layoutDensity")}
+                          options={LAYOUT_DENSITY_OPTIONS.map((option) => ({ value: option, label: option }))}
+                          placeholder={GUIDED_SELECT_PLACEHOLDER}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
-                        >
-                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                          {LAYOUT_DENSITY_OPTIONS.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
+                        />
                       </div>
-                      <div>
+                      <div className="min-w-0 sm:col-span-2">
                         <label className="text-sm font-medium text-zinc-700" htmlFor="animationLevel">Animation Level</label>
-                        <select
+                        <AppSelect
                           id="animationLevel"
                           value={animationLevel}
-                          onChange={(event) => updateDraft(() => setAnimationLevel(event.target.value), "animationLevel")}
+                          onValueChange={(value) => updateDraft(() => setAnimationLevel(value), "animationLevel")}
+                          options={ANIMATION_LEVEL_OPTIONS.map((option) => ({ value: option, label: option }))}
+                          placeholder={GUIDED_SELECT_PLACEHOLDER}
                           className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none ring-zinc-400 focus:ring-2"
                           disabled={bootstrapping || loading || !projectId}
-                        >
-                          <option value="">{GUIDED_SELECT_PLACEHOLDER}</option>
-                          {ANIMATION_LEVEL_OPTIONS.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
+                        />
                       </div>
                     </div>
                     <textarea

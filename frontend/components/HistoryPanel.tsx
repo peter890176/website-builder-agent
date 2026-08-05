@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { AppSelect } from "@/components/AppSelect";
 import {
   compareSnapshots,
   createSnapshot,
@@ -224,14 +225,20 @@ export function HistoryPanel({ projectId, prompt, onRestore, chrome = true }: Hi
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
             <p className="mb-2 text-xs font-medium text-zinc-500">Compare snapshots</p>
             <div className="grid gap-2 sm:grid-cols-3">
-              <select value={compareFrom} onChange={(event) => setCompareFrom(event.target.value)} className="rounded-lg border border-zinc-200 px-2 py-1.5 text-xs">
-                <option value="">From</option>
-                {snapshots.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>{snapshot.label}</option>)}
-              </select>
-              <select value={compareTo} onChange={(event) => setCompareTo(event.target.value)} className="rounded-lg border border-zinc-200 px-2 py-1.5 text-xs">
-                <option value="">To</option>
-                {snapshots.map((snapshot) => <option key={snapshot.id} value={snapshot.id}>{snapshot.label}</option>)}
-              </select>
+              <AppSelect
+                value={compareFrom}
+                onValueChange={setCompareFrom}
+                options={snapshots.map((snapshot) => ({ value: snapshot.id, label: snapshot.label }))}
+                placeholder="From"
+                className="rounded-lg border border-zinc-200 px-2 py-1.5 text-xs"
+              />
+              <AppSelect
+                value={compareTo}
+                onValueChange={setCompareTo}
+                options={snapshots.map((snapshot) => ({ value: snapshot.id, label: snapshot.label }))}
+                placeholder="To"
+                className="rounded-lg border border-zinc-200 px-2 py-1.5 text-xs"
+              />
               <button type="button" onClick={() => void compare()} disabled={loading || !compareFrom || !compareTo} className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:bg-zinc-400">
                 Compare
               </button>
