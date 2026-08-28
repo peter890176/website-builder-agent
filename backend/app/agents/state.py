@@ -6,6 +6,12 @@ from typing import TypedDict
 
 class AgentState(TypedDict):
 
+    run_id: str
+
+    require_approval: bool
+
+    approval_status: str
+
     message: str
 
     project_id: str

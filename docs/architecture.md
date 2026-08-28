@@ -45,6 +45,10 @@ The backend exposes project, diagnostics, snapshot, quality, terminal, variant, 
 Important modules:
 
 - `backend/app/main.py`: FastAPI application and route registration.
+- `backend/app/agents/workflows.py`: LangGraph topology and conditional edge assembly.
+- `backend/app/agents/routing.py`: retry-budget and resume-stage routing decisions.
+- `backend/app/agents/approval.py`: dependency and repair human-in-the-loop interrupts.
+- `backend/app/agents/checkpoint.py`: durable SQLite checkpointer configuration.
 - `backend/app/api/routes/projects.py`: project creation, chat, draft generation, verification, file CRUD, edit preview/apply, and preview serving.
 - `backend/app/services/workspace.py`: project ID validation, safe path validation, metadata, and project file operations.
 - `backend/app/services/build.py`: Vite build execution and source normalization.
@@ -159,6 +163,26 @@ flowchart LR
 - `backend/templates/vite-react-ts/` is the clean project template copied for each new generated project.
 - `backend/.env` stores local secrets and must stay untracked.
 - Deployment records, diagnostics, snapshots, and history are stored per project under the generated workspace.
+- LangGraph checkpoints are stored in `workspace/.builder/langgraph-checkpoints.sqlite3`; a unique agent `run_id` is used as the checkpoint `thread_id`.
+
+## Durable Runs and Human Review
+
+The standard draft flow remains optimized for immediate preview. A separate durable run API executes the complete generation or edit graph with checkpointing and optional human review:
+
+```mermaid
+flowchart LR
+    Start["Start run with thread_id"] --> Work["Plan / generate / validate"]
+    Work --> Decision{"Dependencies or repair?"}
+    Decision -- "No" --> Continue["Continue graph"]
+    Decision -- "Yes" --> Interrupt["LangGraph interrupt"]
+    Interrupt --> Persist["SQLite checkpoint"]
+    Persist --> Review{"Human decision"}
+    Review -- "Approve" --> Resume["Command resume"]
+    Resume --> Continue
+    Review -- "Reject" --> Failure["Controlled failure"]
+```
+
+Because the graph is compiled with a durable checkpointer, the API can reload an interrupted run and resume it with the same `run_id` after the backend process restarts.
 
 ## Reliability Strategy
 

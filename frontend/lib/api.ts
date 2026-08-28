@@ -50,6 +50,30 @@ export type ChatResponse = {
   changed_files: ChangedProjectFile[];
 };
 
+export type AgentRunInterrupt = {
+  kind: "dependency_install" | "repair" | string;
+  question: string;
+  packages?: string[];
+  dev_packages?: string[];
+  stage?: string;
+  error?: string;
+  attempt?: number;
+};
+
+export type AgentRunResponse = {
+  run_id: string;
+  project_id: string;
+  workflow: "builder" | "edit";
+  status: "running" | "interrupted" | "completed" | "failed";
+  interrupt: AgentRunInterrupt | null;
+  next_nodes: string[];
+  files: string[];
+  reply: string;
+  error: string;
+  build_attempts: number;
+  fix_attempts: number;
+};
+
 export type ChangedProjectFile = {
   path: string;
   content: string;
@@ -361,6 +385,55 @@ export async function sendChatDraft(
   }
 
   return response.json() as Promise<ChatResponse>;
+}
+
+export async function startAgentRun(
+  projectId: string,
+  message: string,
+  mode: ChatMode = "auto",
+  requireApproval = true,
+): Promise<AgentRunResponse> {
+  const response = await fetchWithTimeout(
+    `${API_URL}/api/projects/${projectId}/agent-runs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, mode, require_approval: requireApproval }),
+    },
+    CHAT_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return response.json() as Promise<AgentRunResponse>;
+}
+
+export async function getAgentRun(projectId: string, runId: string): Promise<AgentRunResponse> {
+  const response = await fetch(`${API_URL}/api/projects/${projectId}/agent-runs/${runId}`);
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return response.json() as Promise<AgentRunResponse>;
+}
+
+export async function resumeAgentRun(
+  projectId: string,
+  runId: string,
+  approved: boolean,
+): Promise<AgentRunResponse> {
+  const response = await fetchWithTimeout(
+    `${API_URL}/api/projects/${projectId}/agent-runs/${runId}/resume`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved }),
+    },
+    CHAT_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return response.json() as Promise<AgentRunResponse>;
 }
 
 export async function listProjectFiles(projectId: string): Promise<string[]> {

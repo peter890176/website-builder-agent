@@ -10,6 +10,7 @@ This project is a full-stack AI agent application. Users describe the website th
 - **Live browser IDE**: Next.js app with Monaco Editor, file tree management, WebContainer live preview, terminal history, and project switching.
 - **Diff-based AI editing**: Existing projects can be edited through preview/apply flows with change-size classification and large-change confirmation.
 - **Verification loop**: Backend build and runtime diagnostics capture TypeScript errors, runtime errors, warnings, changed files, and repair notes.
+- **Durable agent runs**: LangGraph executions persist checkpoints to SQLite, pause for dependency or repair approval, and resume with the same run ID after a process restart.
 - **Project lifecycle tools**: Snapshot history, restore, compare, ZIP export, GitHub export, and verification-gated deploy actions.
 - **Portfolio-ready architecture**: Separate frontend, backend, generated workspace, Vite template, schemas, services, and agent graph modules.
 
@@ -124,6 +125,20 @@ cd backend
 pip install -r requirements.txt
 python -m pytest
 ```
+
+## Durable Agent Demo
+
+Open the **Jobs** tab and use **Durable Agent Run** to execute the full generation/edit graph with human review enabled. The graph pauses before installing agent-selected dependencies and before autonomous repair attempts. Approve or reject the action in the UI; approval resumes the saved LangGraph thread rather than starting the workflow again.
+
+The matching API is also available for demonstrations and automated clients:
+
+```text
+POST /api/projects/{project_id}/agent-runs
+GET  /api/projects/{project_id}/agent-runs/{run_id}
+POST /api/projects/{project_id}/agent-runs/{run_id}/resume
+```
+
+Checkpoints are stored under `workspace/.builder/langgraph-checkpoints.sqlite3`. Each run uses a distinct `run_id` as its LangGraph `thread_id`.
 
 ## Resume Summary
 

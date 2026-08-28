@@ -5,12 +5,12 @@ from difflib import unified_diff
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 
-from app.agents.graph import (
+from app.agents.workflows import (
     website_builder_graph,
     website_draft_graph,
     website_edit_graph,
 )
-from app.agents.imports import normalize_generated_files, normalize_posix_path
+from app.agents.imports import normalize_posix_path
 from app.agents.state import AgentState
 from app.agents.tsc_errors import build_fix_hints
 from app.core.config import APP_BASE_URL, MAX_BUILD_FIX_ATTEMPTS, RUNTIME_SMOKE_TIMEOUT_MS
@@ -22,7 +22,6 @@ from app.schemas.edit_review import (
     ProjectEditPreviewRequest,
     ProjectEditPreviewResponse,
 )
-from app.schemas.plan import FilePlanItem, ProjectPlan
 from app.schemas.chat import ChatRequest, ChatResponse, ProjectCreateResponse
 from app.schemas.project_file import (
     ProjectFileCreateRequest,
@@ -47,6 +46,11 @@ from app.services.diagnostics import (
     save_project_diagnostics,
 )
 from app.services.jobs import append_job_artifact, append_job_log, create_job, update_job
+from app.services.agent_state import (
+    graph_config,
+    initial_state as _initial_state,
+    prepare_edit_state as _prepare_edit_state,
+)
 from app.services.project_edit import clean_edit_patches, request_project_edit
 from app.services.dependencies import install_planned_dependencies
 from app.services.runtime_smoke import run_runtime_smoke_test
@@ -124,19 +128,20 @@ def post_chat(project_id: str, body: ChatRequest) -> ChatResponse:
         body.mode == "auto" and (get_dist_dir(project_id) / "index.html").is_file()
     )
 
-    initial_state = _initial_state(body.message, project_id, project_dir)
+    run_id = f"{project_id}:chat:{uuid.uuid4().hex}"
+    initial_state = _initial_state(body.message, project_id, project_dir, run_id=run_id)
 
     if should_edit:
         logger.info("Applying incremental edit for project %s", project_id)
         initial_state = _prepare_edit_state(initial_state, body.message, project_dir)
         result = website_edit_graph.invoke(
             initial_state,
-            config={"recursion_limit": 80},
+            config=graph_config(run_id),
         )
     else:
         result = website_builder_graph.invoke(
             initial_state,
-            config={"recursion_limit": 80},
+            config=graph_config(run_id),
         )
 
     if result.get("error"):
@@ -527,9 +532,10 @@ def _run_generate_draft(project_id: str, message: str, project_dir, job_id: str 
         append_job_log(project_id, job_id, "Running LangGraph draft workflow")
         update_job(project_id, job_id, progress=20)
 
+    run_id = f"{project_id}:draft:{job_id or uuid.uuid4().hex}"
     result = website_draft_graph.invoke(
-        _initial_state(message, project_id, project_dir),
-        config={"recursion_limit": 80},
+        _initial_state(message, project_id, project_dir, run_id=run_id),
+        config=graph_config(run_id),
     )
     if result.get("error"):
         raise RuntimeError(result["error"])
@@ -782,81 +788,6 @@ def _classify_edit_change(
     return "small"
 
 
-def _initial_state(message: str, project_id: str, project_dir) -> AgentState:
-    return {
-        "message": message,
-        "project_id": project_id,
-        "workspace_path": str(project_dir),
-        "plan": {},
-        "generated_files": {},
-        "pending_npm": [],
-        "pending_dev_npm": [],
-        "files": [],
-        "reply": "",
-        "warnings": [],
-        "error": None,
-        "build_success": False,
-        "build_attempts": 0,
-        "build_fix_attempts": 0,
-        "runtime_attempts": 0,
-        "runtime_fix_attempts": 0,
-        "fix_attempts": 0,
-        "invalid_fix_attempts": 0,
-        "dep_attempts": 0,
-        "pending_error": "",
-        "failure_stage": "",
-        "target_file": "",
-        "resume_stage": "",
-        "legacy_peer_deps": False,
-        "build_log": "",
-        "failed_npm_specs": [],
-        "last_fix_rejection": "",
-        "last_error_signature": "",
-        "last_error_signatures": [],
-        "build_no_progress_count": 0,
-        "stale_fix_count": 0,
-    }
-
-
-
-def _prepare_edit_state(state: AgentState, message: str, project_dir) -> AgentState:
-    current_files = collect_project_sources(project_dir)
-    edit = clean_edit_patches(request_project_edit(project_dir, message, existing_warnings=state.get("warnings", [])))
-    generated = dict(current_files)
-    for patch in edit.patches:
-        generated[normalize_posix_path(patch.path)] = patch.content
-    generated = normalize_generated_files(generated)
-
-    plan = ProjectPlan(
-        summary=f"Incremental edit: {message}",
-        files=[
-            FilePlanItem(path=path, description=f"Existing edited file {path}", file_type=_plan_file_type(path))
-            for path in sorted(generated)
-        ],
-        npm_dependencies=edit.npm_dependencies,
-    )
-
-    return {
-        **state,
-        "generated_files": generated,
-        "plan": plan.model_dump(),
-        "pending_npm": edit.npm_dependencies,
-        "pending_dev_npm": edit.dev_dependencies,
-        "warnings": [*state.get("warnings", []), *edit.warnings],
-        "reply": edit.notes,
-    }
-
-
-def _plan_file_type(path: str):
-    if path.endswith(".json"):
-        return "json"
-    if path.endswith(".css"):
-        return "css"
-    if path.endswith(".svg"):
-        return "svg"
-    if path.endswith(".ts") and not path.endswith(".tsx"):
-        return "ts"
-    return "tsx"
 
 
 @router.get("/{project_id}/preview")

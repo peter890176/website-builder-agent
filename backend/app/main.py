@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.export_deploy import router as export_deploy_router
+from app.api.routes.agent_runs import router as agent_runs_router
 from app.api.routes.jobs import router as jobs_router
 from app.api.routes.projects import router as projects_router
 from app.api.routes.quality import router as quality_router
@@ -25,6 +26,7 @@ app.add_middleware(
 )
 
 app.include_router(projects_router)
+app.include_router(agent_runs_router)
 app.include_router(jobs_router)
 app.include_router(terminal_router)
 app.include_router(snapshots_router)
