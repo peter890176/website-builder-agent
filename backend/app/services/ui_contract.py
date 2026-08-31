@@ -7,7 +7,7 @@ UI_COMPONENT_CONTRACT = """Shared UI contract (all generated and repaired files 
 - Badge accepts variant="default" | "primary" | "success" | "warning". Never use tone.
 - Button accepts variant="primary" | "secondary" | "outline" | "ghost". For links use href directly or asChild with an <a>; do not put href on a native button.
 - SectionHeader accepts align="center" | "left". Never use centered.
-- Theme colours, typography, radius, shadows, and all visual styling remain project-specific in ui.css; this contract only fixes TypeScript prop names and behaviour.
+- Tailwind CSS 4 is installed. Theme colours, typography, radius, shadows, layout, and responsive styling remain project-specific through Tailwind utilities; this contract only fixes TypeScript prop names and behaviour.
 """
 
 

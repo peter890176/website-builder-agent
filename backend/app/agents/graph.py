@@ -104,6 +104,9 @@ Rules:
 
 - Include @radix-ui/react-slot when using the shared Button primitive.
 
+- Tailwind CSS 4 and the official Vite plugin are already installed and configured.
+- Style TSX with Tailwind utility classes. Do not plan per-component CSS files or rely on undefined BEM/class selectors.
+
 - Prefer a single-page layout unless the user explicitly asks for multiple routes
 
 - Maximum 12 files
@@ -128,6 +131,8 @@ DESIGN_QUALITY_CONTRACT = """
 Design Quality Contract:
 
 - Build a polished, production-quality website, not a plain demo or document page.
+- Tailwind CSS 4 is installed and configured. Use Tailwind utilities for all project-specific layout, colour, typography, spacing, responsive behaviour, and visual effects.
+- Every non-primitive className must be a valid Tailwind utility or arbitrary value. Do not invent CSS class names unless their CSS file is included in the plan.
 - Use the shared primitives from src/components/ui.tsx: Container, Section, SectionHeader, Button, Card, and Badge.
 - Use a centered hero by default, with a concise eyebrow/badge, strong headline, supporting copy, and clear CTA group.
 - Center section headers by default. Keep body copy readable with max-width text containers.
@@ -465,6 +470,9 @@ Rules:
 - Return ONLY the file contents. No markdown fences, no explanation.
 
 - TypeScript/React files must compile with `tsc -b` and `vite build`.
+- Tailwind CSS 4 is available through the official Vite plugin. Use Tailwind utility classes directly in className.
+- Do not use undefined semantic/BEM classes such as `hero__content` or `feature-card`.
+- Do not import App.css or per-component CSS. The template's src/index.css already imports Tailwind.
 - The template uses the React 17+ JSX transform. Do not add `import React from "react";`
   unless the `React` identifier is explicitly used in code.
 

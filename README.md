@@ -22,7 +22,7 @@ This project is a full-stack AI agent application. Users describe the website th
 | Editor and preview | Monaco Editor, WebContainer API, xterm.js |
 | Backend | FastAPI, Pydantic, Uvicorn |
 | AI agent | LangGraph, LangChain, OpenAI |
-| Generated apps | Vite, React, TypeScript |
+| Generated apps | Vite, React, TypeScript, Tailwind CSS 4 |
 | Verification | Vite production build, TypeScript diagnostics, Playwright runtime smoke tests |
 | Export and deploy | ZIP export, GitHub API, Vercel, Netlify, Cloudflare Pages |
 

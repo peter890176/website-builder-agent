@@ -160,7 +160,7 @@ flowchart LR
 ## Data Boundaries
 
 - `workspace/` is generated runtime data and should not be committed.
-- `backend/templates/vite-react-ts/` is the clean project template copied for each new generated project.
+- `backend/templates/vite-react-ts/` is the clean Tailwind CSS 4 + Vite project template copied for each new generated project.
 - `backend/.env` stores local secrets and must stay untracked.
 - Deployment records, diagnostics, snapshots, and history are stored per project under the generated workspace.
 - LangGraph checkpoints are stored in `workspace/.builder/langgraph-checkpoints.sqlite3`; a unique agent `run_id` is used as the checkpoint `thread_id`.
