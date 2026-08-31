@@ -8,6 +8,7 @@ from langgraph.types import Command
 from app.agents.workflows import website_builder_graph, website_edit_graph
 from app.schemas.agent_run import AgentRunResponse, AgentWorkflow
 from app.services.agent_state import graph_config as _config, initial_state, prepare_edit_state
+from app.services.diagnostics import build_diagnostics_from_log, save_project_diagnostics
 from app.services.scaffold import scaffold_vite_project
 from app.services.workspace import get_dist_dir, get_existing_project_dir, set_project_site_state
 
@@ -65,9 +66,19 @@ def _response(project_id: str, run_id: str, workflow: AgentWorkflow, result: dic
         error=result.get("error") or "",
         build_attempts=result.get("build_attempts", 0),
         fix_attempts=result.get("fix_attempts", 0),
+        build_log=result.get("build_log", ""),
+        warnings=result.get("warnings", []),
     )
     _save_record(project_id, run_id, response.model_dump())
     if status == "completed":
+        save_project_diagnostics(
+            build_diagnostics_from_log(
+                project_id,
+                passed=True,
+                build_log=response.build_log,
+                warnings=response.warnings,
+            )
+        )
         set_project_site_state(project_id, "ready")
     return response
 

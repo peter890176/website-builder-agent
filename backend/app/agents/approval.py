@@ -43,24 +43,6 @@ def approve_dependencies(state: AgentState) -> dict:
     return {"approval_status": "approved"}
 
 
-def approve_repair(state: AgentState) -> dict:
-    if not state.get("require_approval"):
-        return {}
-
-    decision = interrupt(
-        {
-            "kind": "repair",
-            "question": "Approve another autonomous repair attempt?",
-            "stage": state.get("failure_stage", "unknown"),
-            "error": state.get("pending_error", ""),
-            "attempt": state.get("fix_attempts", 0) + 1,
-            "project_id": state["project_id"],
-            "run_id": state.get("run_id", ""),
-        }
-    )
-    if not _approved(decision):
-        return {
-            "approval_status": "rejected",
-            "error": "The autonomous repair was rejected by the reviewer.",
-        }
+def approve_repair(_: AgentState) -> dict:
+    """Keep old interrupted checkpoints resumable without prompting new runs."""
     return {"approval_status": "approved"}

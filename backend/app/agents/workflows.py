@@ -36,17 +36,17 @@ def build_website_builder_graph():
     graph.add_conditional_edges(
         "plan",
         lambda state: route_if_pending(state, "generate"),
-        {"generate": "generate", "fix": "approve_repair", "fail": "mark_failure"},
+        {"generate": "generate", "fix": "fix", "approve_repair": "approve_repair", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "generate",
         lambda state: route_if_pending(state, "repair"),
-        {"repair": "repair", "fix": "approve_repair", "fail": "mark_failure"},
+        {"repair": "repair", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "repair",
         lambda state: route_if_pending(state, "approve_dependencies"),
-        {"approve_dependencies": "approve_dependencies", "fix": "approve_repair", "fail": "mark_failure"},
+        {"approve_dependencies": "approve_dependencies", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "approve_dependencies",
@@ -56,17 +56,17 @@ def build_website_builder_graph():
     graph.add_conditional_edges(
         "sync",
         lambda state: route_if_pending(state, "build"),
-        {"build": "build", "fix": "approve_repair", "fail": "mark_failure"},
+        {"build": "build", "fix": "fix", "approve_repair": "approve_repair", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "build",
         lambda state: route_if_pending(state, "smoke") if state.get("build_success") else route_if_pending(state, "fix"),
-        {"smoke": "smoke", "fix": "approve_repair", "fail": "mark_failure"},
+        {"smoke": "smoke", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "smoke",
         lambda state: route_if_pending(state, "finalize"),
-        {"finalize": "finalize", "fix": "approve_repair", "fail": "mark_failure"},
+        {"finalize": "finalize", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "approve_repair",
@@ -81,7 +81,7 @@ def build_website_builder_graph():
             "generate": "generate",
             "repair": "repair",
             "sync": "sync",
-            "fix": "approve_repair",
+            "fix": "fix",
             "smoke": "smoke",
             "fail": "mark_failure",
         },
@@ -111,17 +111,17 @@ def build_website_edit_graph():
     graph.add_conditional_edges(
         "sync",
         lambda state: route_if_pending(state, "build"),
-        {"build": "build", "fix": "approve_repair", "fail": "mark_failure"},
+        {"build": "build", "fix": "fix", "approve_repair": "approve_repair", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "build",
         lambda state: route_if_pending(state, "smoke") if state.get("build_success") else route_if_pending(state, "fix"),
-        {"smoke": "smoke", "fix": "approve_repair", "fail": "mark_failure"},
+        {"smoke": "smoke", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "smoke",
         lambda state: route_if_pending(state, "finalize"),
-        {"finalize": "finalize", "fix": "approve_repair", "fail": "mark_failure"},
+        {"finalize": "finalize", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "approve_repair",
@@ -131,7 +131,7 @@ def build_website_edit_graph():
     graph.add_conditional_edges(
         "fix",
         route_after_fix,
-        {"sync": "sync", "fix": "approve_repair", "smoke": "smoke", "fail": "mark_failure"},
+        {"sync": "sync", "fix": "fix", "smoke": "smoke", "fail": "mark_failure"},
     )
     graph.add_edge("finalize", END)
     graph.add_edge("mark_failure", END)
@@ -154,17 +154,17 @@ def build_website_draft_graph():
     graph.add_conditional_edges(
         "plan",
         lambda state: route_if_pending(state, "generate"),
-        {"generate": "generate", "fix": "approve_repair", "fail": "mark_failure"},
+        {"generate": "generate", "fix": "fix", "approve_repair": "approve_repair", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "generate",
         lambda state: route_if_pending(state, "repair"),
-        {"repair": "repair", "fix": "approve_repair", "fail": "mark_failure"},
+        {"repair": "repair", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "repair",
         lambda state: route_if_pending(state, "approve_dependencies"),
-        {"approve_dependencies": "approve_dependencies", "fix": "approve_repair", "fail": "mark_failure"},
+        {"approve_dependencies": "approve_dependencies", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "approve_dependencies",
@@ -174,7 +174,7 @@ def build_website_draft_graph():
     graph.add_conditional_edges(
         "sync",
         lambda state: route_if_pending(state, "finalize"),
-        {"finalize": "finalize", "fix": "approve_repair", "fail": "mark_failure"},
+        {"finalize": "finalize", "fix": "fix", "fail": "mark_failure"},
     )
     graph.add_conditional_edges(
         "approve_repair",
@@ -189,7 +189,7 @@ def build_website_draft_graph():
             "generate": "generate",
             "repair": "repair",
             "sync": "sync",
-            "fix": "approve_repair",
+            "fix": "fix",
             "fail": "mark_failure",
         },
     )

@@ -72,6 +72,8 @@ export type AgentRunResponse = {
   error: string;
   build_attempts: number;
   fix_attempts: number;
+  build_log: string;
+  warnings: ProjectWarning[];
 };
 
 export type ChangedProjectFile = {

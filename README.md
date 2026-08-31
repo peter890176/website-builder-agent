@@ -10,7 +10,7 @@ This project is a full-stack AI agent application. Users describe the website th
 - **Live browser IDE**: Next.js app with Monaco Editor, file tree management, WebContainer live preview, terminal history, and project switching.
 - **Diff-based AI editing**: Existing projects can be edited through preview/apply flows with change-size classification and large-change confirmation.
 - **Verification loop**: Backend build and runtime diagnostics capture TypeScript errors, runtime errors, warnings, changed files, and repair notes.
-- **Durable agent runs**: LangGraph executions persist checkpoints to SQLite, pause for dependency or repair approval, and resume with the same run ID after a process restart.
+- **Durable agent runs**: LangGraph executions persist checkpoints to SQLite, pause before package installation, and resume with the same run ID after a process restart while ordinary code repairs remain automatic.
 - **Project lifecycle tools**: Snapshot history, restore, compare, ZIP export, GitHub export, and verification-gated deploy actions.
 - **Portfolio-ready architecture**: Separate frontend, backend, generated workspace, Vite template, schemas, services, and agent graph modules.
 
@@ -128,7 +128,7 @@ python -m pytest
 
 ## Durable Agent Demo
 
-Open the **Jobs** tab and use **Durable Agent Run** to execute the full generation/edit graph with human review enabled. The graph pauses before installing agent-selected dependencies and before autonomous repair attempts. Approve or reject the action in the UI; approval resumes the saved LangGraph thread rather than starting the workflow again.
+Use the normal **Ask AI** composer. With **Uninterrupted AI Actions** enabled, website generation repairs errors and installs required packages automatically. Disable the mode to pause before package installation; the approval card then replaces the Preview loading state without blocking the rest of the IDE. Build and runtime repairs remain automatic within the bounded repair loop. Approving resumes from the saved point instead of restarting the workflow; rejecting stops the run. The **Jobs** tab remains focused on background-job history.
 
 The matching API is also available for demonstrations and automated clients:
 

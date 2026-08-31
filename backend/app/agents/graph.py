@@ -14,6 +14,7 @@ from app.agents.content import clean_generated_content, is_valid_entry_tsx
 from app.agents.imports import find_missing_local_files, normalize_generated_files, normalize_posix_path
 
 from app.agents.state import AgentState
+from app.agents.routing import should_give_up
 from app.agents.build_debug_context import (
     build_debug_context_text,
     build_debug_contexts,
@@ -1921,7 +1922,7 @@ def fix_project(state: AgentState) -> dict:
             dict.fromkeys([*state.get("failed_npm_specs", []), *newly_failed_specs])
         )
 
-        if _should_give_up(
+        if should_give_up(
             {
                 **state,
                 "fix_attempts": next_fix_attempts,

@@ -167,13 +167,13 @@ flowchart LR
 
 ## Durable Runs and Human Review
 
-The standard draft flow remains optimized for immediate preview. A separate durable run API executes the complete generation or edit graph with checkpointing and optional human review:
+The main Ask AI generation flow executes the complete generation or edit graph with checkpointing and targeted human review. Uninterrupted mode lets package installation and repair proceed automatically. When that mode is disabled, package installation pauses the agent and replaces the Preview loading state with an approval card; ordinary build and runtime repairs remain automatic:
 
 ```mermaid
 flowchart LR
     Start["Start run with thread_id"] --> Work["Plan / generate / validate"]
-    Work --> Decision{"Dependencies or repair?"}
-    Decision -- "No" --> Continue["Continue graph"]
+    Work --> Decision{"New dependencies?"}
+    Decision -- "No" --> Continue["Generate / validate / auto-repair"]
     Decision -- "Yes" --> Interrupt["LangGraph interrupt"]
     Interrupt --> Persist["SQLite checkpoint"]
     Persist --> Review{"Human decision"}
@@ -182,7 +182,7 @@ flowchart LR
     Review -- "Reject" --> Failure["Controlled failure"]
 ```
 
-Because the graph is compiled with a durable checkpointer, the API can reload an interrupted run and resume it with the same `run_id` after the backend process restarts.
+Because the graph is compiled with a durable checkpointer, the API can reload an interrupted run and resume it with the same `run_id` after the backend process restarts. The Jobs tab is reserved for background-job history.
 
 ## Reliability Strategy
 

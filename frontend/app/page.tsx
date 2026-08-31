@@ -6,7 +6,7 @@ import * as Accordion from "@radix-ui/react-accordion";
 import * as Tabs from "@radix-ui/react-tabs";
 
 import { AppSelect } from "@/components/AppSelect";
-import { AgentRunPanel } from "@/components/AgentRunPanel";
+import { AgentApprovalCard } from "@/components/AgentApprovalCard";
 import { ExportDeployPanel } from "@/components/ExportDeployPanel";
 import { HistoryPanel } from "@/components/HistoryPanel";
 import { JobPanel } from "@/components/JobPanel";
@@ -38,11 +38,13 @@ import {
   readProjectFiles,
   renameProjectFile,
   resolvePreviewUrl,
+  resumeAgentRun,
   runProjectBuild,
   runProjectVerify,
   saveProjectFile,
-  sendChatDraft,
+  startAgentRun,
   updateProject,
+  type AgentRunResponse,
   type ChatResponse,
   type ChatMode,
   type DeploymentRecord,
@@ -100,6 +102,12 @@ type DeployIntent = {
 type PendingDeployIntent = {
   intent: DeployIntent;
   message: string;
+};
+
+type PendingAgentRunContext = {
+  prompt: string;
+  mode: ChatMode;
+  snapshotLabel: string;
 };
 
 type MonacoTypescriptDefaults = {
@@ -693,6 +701,10 @@ export default function BuilderPage() {
   const [promptPreviewSource, setPromptPreviewSource] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingHint, setLoadingHint] = useState("Generating...");
+  const [uninterruptedAgentMode, setUninterruptedAgentMode] = useState(true);
+  const [pendingAgentRun, setPendingAgentRun] = useState<AgentRunResponse | null>(null);
+  const [pendingAgentRunContext, setPendingAgentRunContext] = useState<PendingAgentRunContext | null>(null);
+  const [approvalLoading, setApprovalLoading] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ChatResponse | null>(null);
@@ -1752,8 +1764,93 @@ export default function BuilderPage() {
     setPendingDeployIntent(null);
   }
 
+  async function completeAgentRun(run: AgentRunResponse, context: PendingAgentRunContext) {
+    if (!projectId) {
+      return;
+    }
+    if (run.status === "failed") {
+      throw new Error(run.error || "The AI run could not be completed");
+    }
+    if (run.status !== "completed") {
+      throw new Error("The AI run stopped before completion");
+    }
+
+    const changedFiles = await readProjectFiles(projectId);
+    const response: ChatResponse = {
+      message: "Website generated and verified",
+      reply: run.reply,
+      project_id: projectId,
+      workspace_path: "",
+      files: run.files.length > 0 ? run.files : changedFiles.map((file) => file.path),
+      preview_url: null,
+      build_attempts: run.build_attempts,
+      fix_attempts: run.fix_attempts,
+      build_log: run.build_log,
+      warnings: run.warnings,
+      changed_files: changedFiles,
+    };
+
+    setPendingAgentRun(null);
+    setPendingAgentRunContext(null);
+    setResult(response);
+    setProjects((current) => current.map((project) =>
+      project.project_id === projectId
+        ? { ...project, has_draft: true, site_state: "ready" }
+        : project,
+    ));
+    setAiMessage("");
+    await refreshProjectFiles();
+    await syncChatResponseToWebContainer(response);
+    await createSnapshot(projectId, {
+      label: context.snapshotLabel,
+      kind: context.mode === "generate" ? "generate" : "edit",
+      prompt: context.prompt,
+      notes: response.reply,
+    }).catch(() => undefined);
+    await refreshDiagnostics();
+    setEditAgentStatus("idle");
+  }
+
+  async function decideAgentAction(approved: boolean) {
+    if (!projectId || !pendingAgentRun || !pendingAgentRunContext) {
+      return;
+    }
+
+    setApprovalLoading(true);
+    setLoading(true);
+    setLoadingHint(approved ? "Continuing your website..." : "Stopping generation...");
+    setError(null);
+    setEditPreviewError(null);
+    try {
+      const nextRun = await resumeAgentRun(projectId, pendingAgentRun.run_id, approved);
+      if (nextRun.status === "interrupted") {
+        setPendingAgentRun(nextRun);
+        setEditAgentStatus("review");
+        return;
+      }
+
+      setPendingAgentRun(null);
+      if (nextRun.status === "failed") {
+        setPendingAgentRunContext(null);
+        throw new Error(nextRun.error || (approved ? "The AI run failed" : "Generation was stopped"));
+      }
+      await completeAgentRun(nextRun, pendingAgentRunContext);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to continue the AI run";
+      setPendingAgentRun(null);
+      setPendingAgentRunContext(null);
+      setError(message);
+      setEditPreviewError(message);
+      setEditAgentStatus("needs_attention");
+    } finally {
+      setApprovalLoading(false);
+      setLoading(false);
+      setLoadingHint("Generating...");
+    }
+  }
+
   async function requestProjectDraft(message: string, mode: ChatMode, snapshotLabel: string) {
-    if (!projectId || !message.trim()) {
+    if (!projectId || !message.trim() || pendingAgentRun) {
       return;
     }
 
@@ -1767,26 +1864,19 @@ export default function BuilderPage() {
     setEditAgentStatus("editing");
 
     try {
-      const response = await sendChatDraft(projectId, prompt, mode);
-      setResult(response);
-      setProjects((current) => current.map((project) =>
-        project.project_id === projectId
-          ? { ...project, has_draft: true, site_state: "ready" }
-          : project,
-      ));
-      setAiMessage("");
-      await refreshProjectFiles();
-      await syncChatResponseToWebContainer(response);
-      await createSnapshot(projectId, {
-        label: snapshotLabel,
-        kind: mode === "generate" ? "generate" : "edit",
-        prompt,
-        notes: response.reply,
-      }).catch(() => undefined);
-      await refreshDiagnostics();
-      finishProjectInBackground();
+      const context = { prompt, mode, snapshotLabel };
+      setPendingAgentRunContext(context);
+      const run = await startAgentRun(projectId, prompt, mode, !uninterruptedAgentMode);
+      if (run.status === "interrupted") {
+        setPendingAgentRun(run);
+        setEditAgentStatus("review");
+        return;
+      }
+      await completeAgentRun(run, context);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unable to create the website";
+      setPendingAgentRun(null);
+      setPendingAgentRunContext(null);
       setError(message);
       setEditPreviewError(message);
       setEditAgentStatus("needs_attention");
@@ -2794,6 +2884,20 @@ export default function BuilderPage() {
                 </p>
               )}
 
+              <label className="flex items-start gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2.5 text-xs text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={uninterruptedAgentMode}
+                  disabled={loading || approvalLoading || Boolean(pendingAgentRun)}
+                  onChange={(event) => setUninterruptedAgentMode(event.target.checked)}
+                  className="mt-0.5 accent-cyan-500"
+                />
+                <span>
+                  <span className="block font-medium text-cyan-100">Uninterrupted AI Actions</span>
+                  <span className="mt-0.5 block text-zinc-400">AI automatically repairs errors and installs required packages without pausing for approval.</span>
+                </span>
+              </label>
+
               <div className="-mx-4 -mb-4 flex flex-col gap-2 border-t border-cyan-500/20 bg-slate-950 px-4 py-3 sm:flex-row">
                 {hasWebsite ? (
                   <button
@@ -2805,6 +2909,7 @@ export default function BuilderPage() {
                     || editPreviewLoading
                     || editApplyLoading
                     || deployIntentLoading
+                    || Boolean(pendingAgentRun)
                     || !projectId
                     || !selectedEditorText
                   }
@@ -2817,7 +2922,7 @@ export default function BuilderPage() {
                   <button
                     type="button"
                     onClick={() => void requestDirectDraftFromComposer()}
-                    disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || deployIntentLoading || !projectId || !canRunPromptPreview}
+                    disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || deployIntentLoading || Boolean(pendingAgentRun) || !projectId || !canRunPromptPreview}
                     className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300"
                   >
                     {loading ? loadingHint : "Apply Changes"}
@@ -2832,6 +2937,7 @@ export default function BuilderPage() {
                     || editPreviewLoading
                     || editApplyLoading
                     || deployIntentLoading
+                    || Boolean(pendingAgentRun)
                     || !projectId
                     || (promptPreview && !promptPreviewDirty ? !canRunPromptPreview : !canGeneratePrompt)
                   }
@@ -3338,14 +3444,6 @@ export default function BuilderPage() {
               </Tabs.Content>
 
               <Tabs.Content value="jobs">
-                <AgentRunPanel
-                  projectId={projectId}
-                  compact
-                  onCompleted={async () => {
-                    await refreshProjectFiles();
-                    await refreshDiagnostics();
-                  }}
-                />
                 <JobPanel projectId={projectId} compact />
               </Tabs.Content>
             </div>
@@ -3403,7 +3501,17 @@ export default function BuilderPage() {
               </div>
             ) : null}
 
-            {loading ? (
+            {pendingAgentRun ? (
+              <div className="flex h-full min-h-[70vh] w-full items-center justify-center bg-zinc-50 px-6 py-10">
+                <div className="w-full max-w-xl">
+                  <AgentApprovalCard
+                    run={pendingAgentRun}
+                    loading={approvalLoading}
+                    onDecision={(approved) => void decideAgentAction(approved)}
+                  />
+                </div>
+              </div>
+            ) : loading ? (
               <div className="flex h-full min-h-[70vh] w-full items-center justify-center px-6 text-center text-sm text-zinc-500">
                 Generating a new version. The preview will update automatically when ready...
               </div>

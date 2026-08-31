@@ -32,3 +32,5 @@ class AgentRunResponse(BaseModel):
     error: str = ""
     build_attempts: int = 0
     fix_attempts: int = 0
+    build_log: str = ""
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
