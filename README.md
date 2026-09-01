@@ -1,18 +1,28 @@
-# website-builder-agent
+# Website Builder Agent
 
-AI-powered website builder and browser-based IDE for generating, editing, verifying, and exporting Vite React websites.
+A full-stack AI website builder powered by LangGraph. It generates multi-file Tailwind React projects, validates them with production and browser checks, automatically repairs failures, and supports durable checkpoint-based execution with human approval for protected actions.
 
-This project is a full-stack AI agent application. Users describe the website they want, review a generated file plan, preview the result in a live WebContainer environment, edit files in Monaco, and export or deploy the finished project. Production and browser checks run automatically after generated changes without blocking the live preview.
+## Key Features
 
-## Highlights
+- **Durable LangGraph workflows** with SQLite checkpoints, interrupts, and process-safe resume.
+- **Multi-file website generation** using Vite, React, TypeScript, and Tailwind CSS 4.
+- **Automated repair loop** driven by TypeScript, production-build, dependency, and browser-runtime diagnostics.
+- **Human-in-the-loop controls** for package installation, large AI edits, and deployment actions.
+- **Browser IDE workflow** with Monaco Editor, WebContainer preview, snapshots, diff review, export, and verification-gated deployment.
 
-- **Agentic website generation**: LangGraph workflow plans files, generates code, repairs missing imports, syncs sources, runs production builds, performs runtime smoke checks, and attempts targeted fixes.
-- **Live browser IDE**: Next.js app with Monaco Editor, file tree management, WebContainer live preview, terminal history, and project switching.
-- **Diff-based AI editing**: Existing projects can be edited through preview/apply flows with change-size classification and large-change confirmation.
-- **Verification loop**: Backend build and runtime diagnostics capture TypeScript errors, runtime errors, warnings, changed files, and repair notes.
-- **Durable agent runs**: LangGraph executions persist checkpoints to SQLite, pause before package installation, and resume with the same run ID after a process restart while ordinary code repairs remain automatic.
-- **Project lifecycle tools**: Snapshot history, restore, compare, ZIP export, GitHub export, and verification-gated deploy actions.
-- **Portfolio-ready architecture**: Separate frontend, backend, generated workspace, Vite template, schemas, services, and agent graph modules.
+## Architecture
+
+```mermaid
+flowchart LR
+    A["User prompt"] --> B["Plan project"]
+    B --> C{"Package approval required?"}
+    C -- "Approve or uninterrupted mode" --> D["Generate and sync files"]
+    C -- "Reject" --> X["Controlled failure"]
+    D --> E["Build and runtime checks"]
+    E -- "Failed" --> F["Targeted AI repair"]
+    F --> E
+    E -- "Passed" --> G["Preview, snapshot, export, or deploy"]
+```
 
 ## Tech Stack
 
@@ -26,87 +36,35 @@ This project is a full-stack AI agent application. Users describe the website th
 | Verification | Vite production build, TypeScript diagnostics, Playwright runtime smoke tests |
 | Export and deploy | ZIP export, GitHub API, Vercel, Netlify, Cloudflare Pages |
 
-## Product Flow
+## Quick Start
 
-```mermaid
-flowchart LR
-    A["User prompt"] --> B["Project plan"]
-    B --> C["Generate files"]
-    C --> D["Repair imports and normalize assets"]
-    D --> E["Sync workspace"]
-    E --> F["Live WebContainer preview"]
-    E --> G["Backend verification"]
-    G --> H{"Build/runtime passed?"}
-    H -- "No" --> I["AI repair loop"]
-    I --> G
-    H -- "Yes" --> J["Snapshot, export, or deploy"]
-```
-
-## Repository Structure
-
-```text
-website-builder-agent/
-|-- README.md
-|-- docs/
-|   `-- architecture.md
-|-- frontend/                 # Next.js app and browser IDE
-|   |-- app/
-|   |-- components/
-|   `-- lib/
-|-- backend/                  # FastAPI API, agent workflows, services, schemas
-|   |-- app/
-|   |   |-- agents/
-|   |   |-- api/routes/
-|   |   |-- schemas/
-|   |   `-- services/
-|   |-- templates/
-|   |   `-- vite-react-ts/
-|   `-- tests/
-`-- workspace/                # Generated projects, ignored by git
-```
-
-## Getting Started
-
-### 1. Backend
+### Backend
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+Copy-Item .env.example .env
 uvicorn app.main:app --reload
 ```
 
 Backend API docs are available at http://127.0.0.1:8000/docs.
 
-### 2. Frontend
+### Frontend
 
 ```powershell
 cd frontend
 npm install
+Copy-Item .env.example .env.local
 npm run dev
 ```
 
 Frontend dev server: http://localhost:3000
 
-## Environment Variables
+## Configuration
 
-Create `backend/.env` for local secrets:
-
-```env
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5.4-mini
-OPENAI_FIX_MODEL=gpt-5.3-codex
-APP_BASE_URL=http://127.0.0.1:8000
-
-GITHUB_TOKEN=...
-VERCEL_TOKEN=...
-NETLIFY_TOKEN=...
-CLOUDFLARE_API_TOKEN=...
-CLOUDFLARE_ACCOUNT_ID=...
-```
-
-Only `OPENAI_API_KEY` is required for AI generation and editing. Deployment variables are optional and only needed for the matching provider.
+`OPENAI_API_KEY` is required for generation and AI editing. Deployment credentials are optional and only needed for their matching providers. See `backend/.env.example` and `frontend/.env.example` for the complete configuration template.
 
 ## Verification
 
@@ -128,25 +86,10 @@ python -m pytest
 
 ## Durable Agent Demo
 
-Use the normal **Ask AI** composer. With **Uninterrupted AI Actions** enabled, website generation repairs errors and installs required packages automatically. Disable the mode to pause before package installation; the approval card then replaces the Preview loading state without blocking the rest of the IDE. Build and runtime repairs remain automatic within the bounded repair loop. Approving resumes from the saved point instead of restarting the workflow; rejecting stops the run. The **Jobs** tab remains focused on background-job history.
+Disable **Uninterrupted AI Actions**, then request a website that needs an additional npm package. The graph pauses at a LangGraph interrupt and displays the approval request inside Preview.
 
-The matching API is also available for demonstrations and automated clients:
+To demonstrate durability, restart the backend before approving. The run resumes from its SQLite checkpoint instead of starting over. Build and runtime repairs remain automatic.
 
-```text
-POST /api/projects/{project_id}/agent-runs
-GET  /api/projects/{project_id}/agent-runs/{run_id}
-POST /api/projects/{project_id}/agent-runs/{run_id}/resume
-```
+## Documentation
 
-Checkpoints are stored under `workspace/.builder/langgraph-checkpoints.sqlite3`. Each run uses a distinct `run_id` as its LangGraph `thread_id`.
-
-## Resume Summary
-
-Built a full-stack AI website builder with Next.js, FastAPI, LangGraph, OpenAI, Monaco Editor, and WebContainer live preview. Designed an agent workflow that plans, generates, verifies, and auto-repairs Vite React projects using TypeScript, build, and runtime diagnostics. Added project persistence, version snapshots, diff-based AI edits, export/deploy integrations, and verification-gated deployment.
-
-## Current Limitations
-
-- The frontend app currently contains a large top-level page component; splitting it into focused panels and hooks would improve maintainability.
-- Automated backend coverage is still early and should be expanded around workspace safety, agent repair validation, diagnostics parsing, and deploy providers.
-- AI generation quality depends on configured model behavior and available OpenAI API access.
-- Deploy integrations require provider tokens and have not been abstracted behind a mockable provider interface yet.
+See [docs/architecture.md](docs/architecture.md) for graph topology, persistence, workspace boundaries, verification, and deployment design.
