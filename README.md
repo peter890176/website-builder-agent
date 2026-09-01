@@ -7,8 +7,8 @@ A full-stack AI website builder powered by LangGraph. It generates multi-file Ta
 - **Durable LangGraph workflows** with SQLite checkpoints, interrupts, and process-safe resume.
 - **Multi-file website generation** using Vite, React, TypeScript, and Tailwind CSS 4.
 - **Automated repair loop** driven by TypeScript, production-build, dependency, and browser-runtime diagnostics.
-- **Human-in-the-loop controls** for package installation, large AI edits, and deployment actions.
-- **Browser IDE workflow** with Monaco Editor, WebContainer preview, snapshots, diff review, export, and verification-gated deployment.
+- **Human-in-the-loop controls** for package installation and large AI edits.
+- **Browser IDE workflow** with Monaco Editor, WebContainer preview, snapshots, diff review, and ZIP export.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ flowchart LR
     D --> E["Build and runtime checks"]
     E -- "Failed" --> F["Targeted AI repair"]
     F --> E
-    E -- "Passed" --> G["Preview, snapshot, export, or deploy"]
+    E -- "Passed" --> G["Preview, snapshot, or ZIP export"]
 ```
 
 ## Tech Stack
@@ -34,7 +34,6 @@ flowchart LR
 | AI agent | LangGraph, LangChain, OpenAI |
 | Generated apps | Vite, React, TypeScript, Tailwind CSS 4 |
 | Verification | Vite production build, TypeScript diagnostics, Playwright runtime smoke tests |
-| Export and deploy | ZIP export, GitHub API, Vercel, Netlify, Cloudflare Pages |
 
 ## Quick Start
 
@@ -64,7 +63,7 @@ Frontend dev server: http://localhost:3000
 
 ## Configuration
 
-`OPENAI_API_KEY` is required for generation and AI editing. Deployment credentials are optional and only needed for their matching providers. See `backend/.env.example` and `frontend/.env.example` for the complete configuration template.
+`OPENAI_API_KEY` is required for generation and AI editing. See `backend/.env.example` and `frontend/.env.example` for the complete configuration template.
 
 ## Verification
 
@@ -92,4 +91,4 @@ To demonstrate durability, restart the backend before approving. The run resumes
 
 ## Documentation
 
-See [docs/architecture.md](docs/architecture.md) for graph topology, persistence, workspace boundaries, verification, and deployment design.
+See [docs/architecture.md](docs/architecture.md) for graph topology, persistence, workspace boundaries, and verification design.

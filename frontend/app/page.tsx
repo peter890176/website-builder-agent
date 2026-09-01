@@ -7,7 +7,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 
 import { AppSelect } from "@/components/AppSelect";
 import { AgentApprovalCard } from "@/components/AgentApprovalCard";
-import { ExportDeployPanel } from "@/components/ExportDeployPanel";
+import { ExportPanel } from "@/components/ExportPanel";
 import { HistoryPanel } from "@/components/HistoryPanel";
 import { JobPanel } from "@/components/JobPanel";
 import { TerminalPanel } from "@/components/TerminalPanel";
@@ -29,7 +29,6 @@ import {
   createProjectFile,
   createProject,
   deleteProjectFile,
-  deployProject,
   getProjectDiagnostics,
   listProjectFiles,
   listProjects,
@@ -47,7 +46,6 @@ import {
   type AgentRunResponse,
   type ChatResponse,
   type ChatMode,
-  type DeploymentRecord,
   type ProjectDiagnosticsResponse,
   type ProjectEditPreviewContext,
   type ProjectEditPreviewResponse,
@@ -90,18 +88,6 @@ type MonacoSelectionEvent = {
 
 type MonacoModel = {
   getValueInRange: (selection: MonacoSelection) => string;
-};
-
-type DeployProvider = "vercel" | "netlify" | "cloudflare";
-
-type DeployIntent = {
-  provider: DeployProvider;
-  projectName: string;
-};
-
-type PendingDeployIntent = {
-  intent: DeployIntent;
-  message: string;
 };
 
 type PendingAgentRunContext = {
@@ -366,26 +352,6 @@ const ANIMATION_LEVEL_OPTIONS = [
   "Moderate",
   "Rich",
 ];
-
-function detectDeployIntent(message: string): DeployIntent | null {
-  const text = message.toLowerCase();
-  const wantsDeploy = /\b(deploy|deployment|publish|release|go live|launch)\b/.test(text);
-  if (!wantsDeploy) {
-    return null;
-  }
-
-  const provider: DeployProvider = text.includes("cloudflare")
-    ? "cloudflare"
-    : text.includes("vercel")
-      ? "vercel"
-      : "netlify";
-  const nameMatch = message.match(/(?:as|named|name|site name|project name)\s+["']?([a-z0-9][a-z0-9-]{2,62})["']?/i);
-
-  return {
-    provider,
-    projectName: nameMatch?.[1] ?? "",
-  };
-}
 
 const SECTION_GROUPS = [
   {
@@ -740,12 +706,9 @@ export default function BuilderPage() {
   const [editAgentStatus, setEditAgentStatus] = useState<"idle" | "editing" | "review" | "applying" | "verifying" | "needs_attention">("idle");
   const [builtPreviewLoading, setBuiltPreviewLoading] = useState(false);
   const [builtPreviewError, setBuiltPreviewError] = useState<string | null>(null);
-  const [deployIntentLoading, setDeployIntentLoading] = useState(false);
-  const [lastPromptDeployment, setLastPromptDeployment] = useState<DeploymentRecord | null>(null);
-  const [pendingDeployIntent, setPendingDeployIntent] = useState<PendingDeployIntent | null>(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
   const [activeToolTab, setActiveToolTab] = useState<"problems" | "logs" | "terminal" | "jobs">("jobs");
-  const [exportDeployOpen, setExportDeployOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameProjectName, setRenameProjectName] = useState("");
@@ -1019,7 +982,6 @@ export default function BuilderPage() {
     setEditAgentStatus("idle");
     setBuiltPreviewLoading(false);
     setBuiltPreviewError(null);
-    setPendingDeployIntent(null);
     setVerifyLoading(false);
     setActiveToolTab("jobs");
     autoLiveProjectRef.current = null;
@@ -1320,7 +1282,7 @@ export default function BuilderPage() {
   }, [isNewProject, projectId, startLivePreview]);
 
   useEffect(() => {
-    if (!historyOpen && !exportDeployOpen && !renameDialogOpen) {
+    if (!historyOpen && !exportOpen && !renameDialogOpen) {
       return;
     }
     const previousOverflow = document.body.style.overflow;
@@ -1328,7 +1290,7 @@ export default function BuilderPage() {
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [exportDeployOpen, historyOpen, renameDialogOpen]);
+  }, [exportOpen, historyOpen, renameDialogOpen]);
 
   const saveCurrentFile = useCallback(async () => {
     if (!projectId || !selectedFile) {
@@ -1761,7 +1723,6 @@ export default function BuilderPage() {
     setPromptPreview(nextPrompt);
     setPromptPreviewSource(nextPrompt);
     setEditPreviewError(null);
-    setPendingDeployIntent(null);
   }
 
   async function completeAgentRun(run: AgentRunResponse, context: PendingAgentRunContext) {
@@ -1939,56 +1900,9 @@ export default function BuilderPage() {
     }
   }
 
-  async function requestPromptDeployment(intent: DeployIntent, message: string) {
-    if (!projectId) {
-      return;
-    }
-
-    setDeployIntentLoading(true);
-    setEditPreviewError(null);
-    setEditPreview(null);
-    setPendingDeployIntent(null);
-    setEditAgentStatus("applying");
-    setActiveToolTab("jobs");
-
-    try {
-      const deployment = await deployProject(projectId, {
-        provider: intent.provider,
-        project_name: intent.projectName,
-        site_name: intent.projectName,
-      });
-      lastAiPromptRef.current = message.trim();
-      setLastPromptDeployment(deployment);
-      setAiMessage("");
-      setExportDeployOpen(true);
-      setEditAgentStatus("idle");
-    } catch (err: unknown) {
-      setEditAgentStatus("needs_attention");
-      setEditPreviewError(err instanceof Error ? err.message : "Deployment failed");
-    } finally {
-      setDeployIntentLoading(false);
-    }
-  }
-
   async function runPromptPreview() {
     const prompt = promptPreview.trim();
     if (!prompt || promptPreviewDirty) {
-      return;
-    }
-
-    const deployIntent = detectDeployIntent(prompt);
-    if (deployIntent) {
-      if (diagnostics?.status !== "passed") {
-        setPendingDeployIntent(null);
-        setEditPreviewError("The website is still being prepared. Wait until it is ready, then ask AI to publish it again.");
-        setActiveToolTab("problems");
-        return;
-      }
-
-      setEditPreviewError(null);
-      setEditPreview(null);
-      setPendingDeployIntent({ intent: deployIntent, message: prompt });
-      setEditAgentStatus("review");
       return;
     }
 
@@ -2604,7 +2518,7 @@ export default function BuilderPage() {
                       type="checkbox"
                       checked={includeGuidedFields}
                       onChange={(event) => setIncludeGuidedFields(event.target.checked)}
-                      disabled={bootstrapping || loading || deployIntentLoading || !projectId}
+                      disabled={bootstrapping || loading || !projectId}
                     />
                     Include guided fields
                   </label>
@@ -2640,17 +2554,14 @@ export default function BuilderPage() {
                 id="aiPrompt"
                 rows={5}
                 value={aiMessage}
-                onChange={(event) => {
-                  setAiMessage(event.target.value);
-                  setPendingDeployIntent(null);
-                }}
+                onChange={(event) => setAiMessage(event.target.value)}
                 className="max-h-56 min-h-32 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none ring-cyan-400 focus:ring-2"
                 placeholder={
                   hasWebsite
                     ? "For example: research stronger CTA copy, update the Hero, then prepare a Diff Review"
                     : "For example: research modern bilingual joke sites, then build a searchable archive with categories"
                 }
-                disabled={bootstrapping || loading || deployIntentLoading || !projectId}
+                disabled={bootstrapping || loading || !projectId}
               />
 
               {promptPreview ? (
@@ -2675,7 +2586,7 @@ export default function BuilderPage() {
                         setPromptPreviewSource("");
                       }}
                       className="shrink-0 rounded-lg border border-current px-2 py-1 text-[11px] font-medium"
-                      disabled={loading || editPreviewLoading || deployIntentLoading}
+                      disabled={loading || editPreviewLoading}
                     >
                       Back
                     </button>
@@ -2685,54 +2596,8 @@ export default function BuilderPage() {
                     onChange={(event) => setPromptPreview(event.target.value)}
                     rows={7}
                     className="mt-3 max-h-56 w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-[11px] leading-5 text-zinc-800 outline-none ring-cyan-400 focus:ring-2"
-                    disabled={loading || editPreviewLoading || editApplyLoading || deployIntentLoading}
+                    disabled={loading || editPreviewLoading || editApplyLoading}
                   />
-                </div>
-              ) : null}
-
-              {lastPromptDeployment ? (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5 text-emerald-800">
-                  <p className="font-medium">Deployment ready via {lastPromptDeployment.provider}.</p>
-                  {lastPromptDeployment.url ? (
-                    <a href={lastPromptDeployment.url} target="_blank" rel="noreferrer" className="mt-1 block underline underline-offset-4">
-                      {lastPromptDeployment.url}
-                    </a>
-                  ) : (
-                    <p className="mt-1">{lastPromptDeployment.message}</p>
-                  )}
-                </div>
-              ) : null}
-
-              {pendingDeployIntent ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-                  <p className="font-medium">
-                    Confirm deployment to {pendingDeployIntent.intent.provider}
-                    {pendingDeployIntent.intent.projectName ? ` as ${pendingDeployIntent.intent.projectName}` : ""}
-                  </p>
-                  <p className="mt-1">
-                    This will publish the website when it is ready.
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void requestPromptDeployment(pendingDeployIntent.intent, pendingDeployIntent.message)}
-                      disabled={deployIntentLoading}
-                      className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-amber-800 disabled:bg-amber-300"
-                    >
-                      Confirm Deployment
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPendingDeployIntent(null);
-                        setEditAgentStatus("idle");
-                      }}
-                      disabled={deployIntentLoading}
-                      className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
-                    >
-                      Cancel
-                    </button>
-                  </div>
                 </div>
               ) : null}
 
@@ -2908,7 +2773,6 @@ export default function BuilderPage() {
                     || loading
                     || editPreviewLoading
                     || editApplyLoading
-                    || deployIntentLoading
                     || Boolean(pendingAgentRun)
                     || !projectId
                     || !selectedEditorText
@@ -2922,7 +2786,7 @@ export default function BuilderPage() {
                   <button
                     type="button"
                     onClick={() => void requestDirectDraftFromComposer()}
-                    disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || deployIntentLoading || Boolean(pendingAgentRun) || !projectId || !canRunPromptPreview}
+                    disabled={bootstrapping || loading || editPreviewLoading || editApplyLoading || Boolean(pendingAgentRun) || !projectId || !canRunPromptPreview}
                     className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300"
                   >
                     {loading ? loadingHint : "Apply Changes"}
@@ -2936,26 +2800,23 @@ export default function BuilderPage() {
                     || loading
                     || editPreviewLoading
                     || editApplyLoading
-                    || deployIntentLoading
                     || Boolean(pendingAgentRun)
                     || !projectId
                     || (promptPreview && !promptPreviewDirty ? !canRunPromptPreview : !canGeneratePrompt)
                   }
                   className="rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-zinc-500 sm:flex-1"
                 >
-                  {deployIntentLoading
-                    ? "Deploying..."
-                    : loading
-                      ? loadingHint
-                      : editPreviewLoading
-                        ? "Generating diff..."
-                        : promptPreview && !promptPreviewDirty
-                          ? hasWebsite
-                            ? "Generate Diff Review"
-                            : "Generate Website"
-                          : promptPreviewDirty
-                            ? "Regenerate Prompt"
-                            : "Generate Prompt"}
+                  {loading
+                    ? loadingHint
+                    : editPreviewLoading
+                      ? "Generating diff..."
+                      : promptPreview && !promptPreviewDirty
+                        ? hasWebsite
+                          ? "Generate Diff Review"
+                          : "Generate Website"
+                        : promptPreviewDirty
+                          ? "Regenerate Prompt"
+                          : "Generate Prompt"}
                 </button>
               </div>
             </form>
@@ -3054,11 +2915,11 @@ export default function BuilderPage() {
             </button>
             <button
               type="button"
-              onClick={() => setExportDeployOpen(true)}
+              onClick={() => setExportOpen(true)}
               className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
               disabled={!projectId}
             >
-              Export / Deploy
+              Export
             </button>
           </div>
 
@@ -3666,36 +3527,36 @@ export default function BuilderPage() {
         </div>
       ) : null}
 
-      {exportDeployOpen ? (
+      {exportOpen ? (
         <div
           className="fixed inset-0 z-50 flex cursor-pointer items-center justify-center bg-zinc-950/90 px-4 py-6 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
-          aria-label="Export and deploy"
+          aria-label="Export project"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setExportDeployOpen(false);
+              setExportOpen(false);
             }
           }}
         >
           <div className="builder-modal-panel max-h-[90vh] w-full max-w-3xl cursor-default overflow-auto rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl">
             <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-900">Export / Deploy</h2>
+                <h2 className="text-sm font-semibold text-zinc-900">Export Project</h2>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Download ZIP files, export to GitHub, or deploy to a provider. Deploy availability depends on verified status.
+                  Download the editable workspace or a verified production build as a ZIP archive.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setExportDeployOpen(false)}
+                onClick={() => setExportOpen(false)}
                 className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
               >
                 Close
               </button>
             </div>
             <div className="p-4">
-              <ExportDeployPanel projectId={projectId} diagnostics={diagnostics} chrome={false} />
+              <ExportPanel projectId={projectId} diagnostics={diagnostics} chrome={false} />
             </div>
           </div>
         </div>

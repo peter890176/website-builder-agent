@@ -1,6 +1,6 @@
 # Architecture
 
-`website-builder-agent` is organized around one core loop: turn a user request into a working Vite React project, show it immediately in the browser, and keep verification feedback close enough that the generated app can be repaired or shipped.
+`website-builder-agent` is organized around one core loop: turn a user request into a working Vite React project, show it immediately in the browser, and keep verification feedback close enough that the generated app can be repaired and exported.
 
 ## System Overview
 
@@ -12,7 +12,7 @@ flowchart TB
     Workspace["Generated Workspace"]
     WebContainer["WebContainer Preview"]
     Build["Build and Runtime Verification"]
-    Export["Export and Deploy"]
+    Export["ZIP Export"]
 
     UI --> API
     UI --> WebContainer
@@ -27,7 +27,7 @@ flowchart TB
 
 ## Frontend
 
-The frontend is a browser IDE built with Next.js and TypeScript. It manages guided prompting, project selection, file browsing, Monaco-based editing, live preview, diagnostics, history, and export/deploy actions.
+The frontend is a browser IDE built with Next.js and TypeScript. It manages guided prompting, project selection, file browsing, Monaco-based editing, live preview, diagnostics, history, and ZIP export.
 
 Important modules:
 
@@ -36,25 +36,24 @@ Important modules:
 - `frontend/lib/webcontainer/runtime.ts`: WebContainer boot, file sync, and live preview runtime.
 - `frontend/components/TerminalPanel.tsx`: project terminal history and package install actions.
 - `frontend/components/HistoryPanel.tsx`: snapshots, restore, and compare UI.
-- `frontend/components/ExportDeployPanel.tsx`: ZIP, GitHub export, and deploy controls.
+- `frontend/components/ExportPanel.tsx`: workspace and verified production ZIP controls.
 
 ## Backend
 
-The backend exposes project, diagnostics, snapshot, quality, terminal, variant, export, and deploy APIs. It also owns filesystem safety for generated projects under `workspace/`.
+The backend exposes project, diagnostics, snapshot, quality, terminal, variant, and export APIs. It also owns filesystem safety for generated projects under `workspace/`.
 
 Important modules:
 
 - `backend/app/main.py`: FastAPI application and route registration.
 - `backend/app/agents/workflows.py`: LangGraph topology and conditional edge assembly.
 - `backend/app/agents/routing.py`: retry-budget and resume-stage routing decisions.
-- `backend/app/agents/approval.py`: dependency and repair human-in-the-loop interrupts.
+- `backend/app/agents/approval.py`: dependency approval interrupts and repair checkpoint compatibility.
 - `backend/app/agents/checkpoint.py`: durable SQLite checkpointer configuration.
 - `backend/app/api/routes/projects.py`: project creation, chat, draft generation, verification, file CRUD, edit preview/apply, and preview serving.
 - `backend/app/services/workspace.py`: project ID validation, safe path validation, metadata, and project file operations.
 - `backend/app/services/build.py`: Vite build execution and source normalization.
 - `backend/app/services/runtime_smoke.py`: Playwright smoke test against generated builds.
-- `backend/app/services/export.py`: ZIP and deployment record persistence.
-- `backend/app/services/deploy/providers.py`: GitHub, Vercel, Netlify, and Cloudflare provider integrations.
+- `backend/app/services/export.py`: workspace and production-build ZIP creation.
 
 ## Agent Workflow
 
@@ -162,7 +161,7 @@ flowchart LR
 - `workspace/` is generated runtime data and should not be committed.
 - `backend/templates/vite-react-ts/` is the clean Tailwind CSS 4 + Vite project template copied for each new generated project.
 - `backend/.env` stores local secrets and must stay untracked.
-- Deployment records, diagnostics, snapshots, and history are stored per project under the generated workspace.
+- Diagnostics, snapshots, and history are stored per project under the generated workspace.
 - LangGraph checkpoints are stored in `workspace/.builder/langgraph-checkpoints.sqlite3`; a unique agent `run_id` is used as the checkpoint `thread_id`.
 
 ## Durable Runs and Human Review
@@ -191,4 +190,3 @@ Because the graph is compiled with a durable checkpointer, the API can reload an
 - Build failures are parsed into TypeScript diagnostics and summarized for repair prompts.
 - Runtime smoke checks catch browser-only errors that TypeScript cannot see.
 - Large AI edit previews require confirmation before apply.
-- Deployment actions are gated on passed backend verification.

@@ -8,6 +8,9 @@
 .DS_Store
 Thumbs.db
 
+# Local editor and tool configuration
+.cursor/
+
 # Frontend (Next.js)
 frontend/node_modules/
 frontend/.next/
